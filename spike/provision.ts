@@ -15,17 +15,22 @@
 
 import {
   createAgentChannel,
-  createGuild,
   createInvite,
-  deleteGuild,
+  deleteChannel,
   enableMessageContentIntent,
   getApplication,
   getBotUser,
+  getOwnerId,
   inviteUrl,
   listGuilds,
   renameBot,
+  waitForGuild,
 } from '../src/discord/provision.ts'
-import { AGENT_PERMISSIONS, GATEWAY_MESSAGE_CONTENT_LIMITED } from '../src/discord/constants.ts'
+import {
+  AGENT_PERMISSIONS,
+  GATEWAY_MESSAGE_CONTENT_LIMITED,
+  PROVISIONER_PERMISSIONS,
+} from '../src/discord/constants.ts'
 
 const token = process.argv[2]
 const cleanup = process.argv.includes('--cleanup')
@@ -86,38 +91,56 @@ const renamed = await step('rename bot user', () =>
 )
 if (renamed) console.log(`      renamed to @${renamed.username}`)
 
-// 4. Guild creation — bots in <10 guilds only.
-const guilds = await step('list guilds', () => listGuilds(token))
-if (guilds) console.log(`      in ${guilds.length} guild(s); limit for POST /guilds is 10`)
+// 4. Find the server. Aquila cannot create it — Discord restricted POST /guilds
+//    for applications on 2025-07-15. The human makes it; we discover the id.
+const existing = await step('list guilds', () => listGuilds(token))
+if (existing && !existing.length) {
+  console.log(`\n  Bot is in no servers. Create one in Discord (+ → Create My Own),`)
+  console.log(`  then install this bot into it:\n`)
+  console.log(`    ${inviteUrl(app.id, undefined, PROVISIONER_PERMISSIONS)}\n`)
+  console.log(`  Waiting up to 5 minutes...`)
+}
 
-const guild = await step('create guild', () => createGuild(token, 'Aquila Spike'))
-if (guild) console.log(`      guild "${guild.name}" (${guild.id}), owner=${guild.owner_id}`)
+const guild = await step('discover guild', () => waitForGuild(token))
+if (guild) console.log(`      guild "${guild.name}" (${guild.id})`)
 
-// 5. Scoped channel — the isolation that justifies one-bot-per-agent.
+// 5. Owner snowflake — no gateway, no pairing code.
+let ownerId: string | undefined
+if (guild) {
+  ownerId = await step('read owner id', () => getOwnerId(token, guild.id))
+  if (ownerId) console.log(`      owner ${ownerId} — seeds each agent's allowlist`)
+}
+
+// 6. Scoped channel — the isolation that justifies one-bot-per-agent.
+//    Requires MANAGE_CHANNELS + MANAGE_ROLES, hence PROVISIONER_PERMISSIONS.
 let channelId: string | undefined
 if (guild && botUser) {
   const channel = await step('create scoped channel', () =>
-    createAgentChannel(token, guild.id, 'backend', botUser.id),
+    createAgentChannel(token, guild.id, 'aquila-spike', botUser.id),
   )
   channelId = channel?.id
   if (channel) console.log(`      #${channel.name} (${channel.id}), @everyone denied VIEW_CHANNEL`)
 }
 
-// 6. Invite for the human.
+// 7. Invite for teammates.
 if (channelId) {
-  const url = await step('create invite', () => createInvite(token, channelId!))
+  const url = await step('create invite', () => createInvite(token, channelId))
   if (url) console.log(`      join: ${url}`)
 }
 
-// 7. Pure string construction — no API call, but worth eyeballing.
-console.log(`\n  one-click install url:\n    ${inviteUrl(app.id, guild?.id)}`)
-console.log(`  agent permissions integer: ${AGENT_PERMISSIONS}`)
+// 8. Pure string construction — no API call, but worth eyeballing.
+console.log(`\n  one-click install url (agent):\n    ${inviteUrl(app.id, guild?.id)}`)
+console.log(
+  `\n  one-click install url (provisioner):\n    ${inviteUrl(app.id, guild?.id, PROVISIONER_PERMISSIONS)}`,
+)
+console.log(`\n  agent permissions:       ${AGENT_PERMISSIONS}`)
+console.log(`  provisioner permissions: ${PROVISIONER_PERMISSIONS}`)
 
-// 8. Optional teardown.
-if (cleanup && guild) {
-  await step('delete guild', () => deleteGuild(token, guild.id))
-} else if (guild) {
-  console.log(`\n  test guild left in place — rerun with --cleanup to delete it`)
+// 9. Optional teardown. Only the channel — the server belongs to the user now.
+if (cleanup && channelId) {
+  await step('delete channel', () => deleteChannel(token, channelId))
+} else if (channelId) {
+  console.log(`\n  test channel left in place — rerun with --cleanup to delete it`)
 }
 
 // Summary.

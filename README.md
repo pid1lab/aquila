@@ -13,30 +13,41 @@ aquila up
 
 ---
 
-## The one thing Aquila can't do
+## What Aquila can't do
 
-**Discord has no public API for creating an application.** The Developer Portal
-drives private endpoints with a *user* token, and automating that means driving a
-user account — self-botting under Discord's ToS, with real account-termination
-risk. Aquila does not do it, and neither should anything else you install.
+Two things, both enforced by Discord:
 
-So for each agent you spend about 40 seconds in the
-[Developer Portal](https://discord.com/developers/applications):
+**It can't create the Discord application.** There is no public endpoint. The
+Developer Portal drives private routes with a *user* token, and automating that
+means driving a user account — self-botting under Discord's ToS, with real
+account-termination risk. Aquila does not do it, and neither should anything else
+you install. Budget ~40s per agent in the
+[portal](https://discord.com/developers/applications): **New Application** → name
+it → **Bot** → **Reset Token** → copy.
 
-1. **New Application** → name it
-2. **Bot** → **Reset Token** → copy
+**It can't create the server.** Discord restricted `POST /guilds` for
+applications on 2025-07-15 — bots now get `Bots cannot use this endpoint`, and
+guilds that bots did own were transferred to real users. So you create the server
+yourself: **+** → **Create My Own** in the Discord client. Three clicks, once —
+not per agent.
 
-That's the whole manual surface. Aquila does the rest:
+Everything else is automatic:
 
 | Step | How |
 | --- | --- |
 | Enable Message Content intent | `PATCH /applications/@me`, `flags: 1<<19` |
 | Name the bot, set its avatar | `PATCH /users/@me` |
-| Create the shared server | `POST /guilds` |
+| Learn which server you made | `GET /users/@me/guilds` after the first install |
+| Learn your snowflake | that guild's `owner_id` — no pairing code, no Developer Mode |
 | Create a channel per agent, scoped so each bot sees only its own | `POST /guilds/{id}/channels` with permission overwrites |
-| One-click install links, server pre-selected | `guild_id` + `disable_guild_select=true` |
-| Capture your snowflake | `GuildMemberAdd` — no pairing codes |
+| One-click installs for agents 2..N, server pre-selected | `guild_id` + `disable_guild_select=true` |
+| Install the channel plugin | `claude plugin install discord@claude-plugins-official` |
 | Write tokens, access policy, launchers | per-agent state dirs |
+
+The first bot is installed before Aquila knows the server id, so you pick from a
+dropdown once. It also carries `PROVISIONER_PERMISSIONS` (adds `MANAGE_CHANNELS`
+and `MANAGE_ROLES`) because it creates every agent's channel. Bots after it need
+only `AGENT_PERMISSIONS` and install in a single click.
 
 For comparison, the official plugin's documented setup is nine steps *per agent*,
 including the OAuth2 URL Generator, six permission checkboxes, a pairing-code
@@ -71,13 +82,15 @@ bun install
 bun spike/provision.ts <throwaway-bot-token> --cleanup
 ```
 
-The spike exercises the full chain — token → intent flag → bot rename → guild →
-scoped channel → invite — and reports which links hold. `renameBot` is the one
-step Discord's docs don't confirm works with a bot token; if it fails, per-agent
-naming becomes manual portal work and the CLI's flow changes accordingly. Run the
-spike before building on it.
+The spike exercises the full chain — token → intent flag → bot rename → discover
+guild → owner id → scoped channel → invite — and reports which links hold. If the
+bot isn't in a server yet it prints an install URL and waits for you.
 
-Use a throwaway application: the spike creates a real server and renames the bot.
+Use a throwaway application: the spike renames the bot and creates a channel.
+
+Spike results so far (2026-07-30): intent flag and `renameBot` both confirmed
+working against a live token. `POST /guilds` confirmed dead for bots, which is
+why the server is yours to create.
 
 ## Layout
 

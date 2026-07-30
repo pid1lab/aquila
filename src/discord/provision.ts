@@ -97,32 +97,58 @@ export async function renameBot(
   return rest<User>(token, 'PATCH', '/users/@me', body)
 }
 
-/** Guilds this bot is in. POST /guilds requires being in fewer than 10. */
+/** Guilds this bot is in. */
 export function listGuilds(token: string): Promise<Guild[]> {
   return rest<Guild[]>(token, 'GET', '/users/@me/guilds')
 }
 
-/**
- * Create the shared server. Usable only by bots in <10 guilds; the bot becomes
- * owner, which is slightly odd but is what makes the rest of this automatic —
- * as owner it can create channels, roles, and invites with no further consent.
- *
- * If the user would rather own the server themselves, they create it by hand
- * and hand us the id; everything downstream is unchanged.
- */
-export async function createGuild(token: string, name: string): Promise<Guild> {
-  const guilds = await listGuilds(token)
-  if (guilds.length >= 10) {
-    throw new Error(
-      `Bot is in ${guilds.length} guilds; POST /guilds requires fewer than 10. ` +
-        `Create the server manually and pass its id instead.`,
-    )
-  }
-  return rest<Guild>(token, 'POST', '/guilds', { name })
+/** Full guild object. `owner_id` is the human who created the server. */
+export function getGuild(token: string, guildId: string): Promise<Guild> {
+  return rest<Guild>(token, 'GET', `/guilds/${guildId}`)
 }
 
-export function deleteGuild(token: string, guildId: string): Promise<void> {
-  return rest<void>(token, 'DELETE', `/guilds/${guildId}`)
+/**
+ * Wait for the user to install this bot into a server, then report which one.
+ *
+ * Aquila cannot create the server: Discord restricted POST /guilds for
+ * applications on 2025-07-15 ("Bots cannot use this endpoint") and moved
+ * bot-owned guilds to real users. So the human makes the server — three clicks
+ * in the Discord client — and we *discover* its id from the bot's own guild
+ * list rather than asking anyone to copy a snowflake.
+ *
+ * That detail matters: it's what keeps Developer Mode and right-click-Copy-ID
+ * out of the setup flow entirely.
+ */
+export async function waitForGuild(
+  token: string,
+  { timeoutMs = 300_000, intervalMs = 3_000 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<Guild> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const guilds = await listGuilds(token)
+    const first = guilds[0]
+    if (first) return first
+    if (Date.now() >= deadline) {
+      throw new Error(`Bot was not added to any server within ${Math.round(timeoutMs / 1000)}s.`)
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+}
+
+/**
+ * The human's snowflake, for seeding each agent's allowlist.
+ *
+ * They created the server, so they own it — no gateway connection, no member
+ * polling, and no pairing-code exchange needed to learn who they are.
+ */
+export async function getOwnerId(token: string, guildId: string): Promise<string> {
+  const guild = await getGuild(token, guildId)
+  if (!guild.owner_id) throw new Error(`Guild ${guildId} returned no owner_id`)
+  return guild.owner_id
+}
+
+export function deleteChannel(token: string, channelId: string): Promise<void> {
+  return rest<void>(token, 'DELETE', `/channels/${channelId}`)
 }
 
 /**
@@ -172,12 +198,21 @@ export async function createInvite(token: string, channelId: string): Promise<st
  * `guild_id` pre-fills the dropdown and `disable_guild_select` locks it, so the
  * user sees one Authorize button rather than a server picker and a wall of
  * permission checkboxes. This replaces the OAuth2 URL Generator entirely.
+ *
+ * The first bot is installed before we know the guild id, so it gets no
+ * `guild_id` and the user picks from the dropdown once. Every bot after that is
+ * a single click. Pass PROVISIONER_PERMISSIONS for whichever bot creates the
+ * channels; AGENT_PERMISSIONS for the rest.
  */
-export function inviteUrl(applicationId: string, guildId?: string): string {
+export function inviteUrl(
+  applicationId: string,
+  guildId?: string,
+  permissions: bigint = AGENT_PERMISSIONS,
+): string {
   const params = new URLSearchParams({
     client_id: applicationId,
     scope: 'bot',
-    permissions: AGENT_PERMISSIONS.toString(),
+    permissions: permissions.toString(),
   })
   if (guildId) {
     params.set('guild_id', guildId)
