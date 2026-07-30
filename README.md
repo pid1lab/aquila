@@ -135,6 +135,9 @@ why the server is yours to create.
 ```
 src/
   cli.ts                 command dispatch
+  init.ts                provisioning flow
+  tokens.ts              token collection — terminal prompts and the --web form
+  up.ts                  agent lifecycle: detached pty sessions, up/down/status
   config.ts              ~/.aquila state, per-agent state dirs, access.json seeding
   discord/
     rest.ts              minimal REST client with 429 handling
