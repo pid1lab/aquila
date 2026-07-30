@@ -146,7 +146,7 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
     console.log(`\n  Install ${t.agent}:\n`)
     console.log(`    ${inviteUrl(t.applicationId, guildId, AGENT_PERMISSIONS)}\n`)
     step('waiting...')
-    await waitForGuild(t.token)
+    await waitForGuild(t.token, { expectId: guildId })
     done(`${t.agent}: joined`)
   }
 
@@ -154,24 +154,39 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
   //    by our routing — the reason this design uses one bot per agent.
   console.log()
   const agents: Agent[] = []
+
+  // Persist after each agent. A failure partway then leaves consistent state —
+  // the agents already provisioned are in config and usable, rather than being
+  // orphaned channels and state dirs that nothing knows about.
+  const persist = () => saveConfig({ guildId, ownerId, agents: [...config.agents, ...agents] })
+
   for (const [index, t] of tokens.entries()) {
     const spec = parsed[index]
     if (!spec) continue
 
-    const channel = await createAgentChannel(provisioner.token, guildId, t.agent, t.botUserId)
-    const stateDir = stateDirFor(t.agent)
-    await writeAgentToken(stateDir, t.token)
-    await writeAgentAccess(stateDir, ownerId, channel.id)
+    try {
+      const channel = await createAgentChannel(provisioner.token, guildId, t.agent, t.botUserId)
+      const stateDir = stateDirFor(t.agent)
+      await writeAgentToken(stateDir, t.token)
+      await writeAgentAccess(stateDir, ownerId, channel.id)
 
-    agents.push({
-      name: t.agent,
-      path: spec.path,
-      applicationId: t.applicationId,
-      botUserId: t.botUserId,
-      channelId: channel.id,
-      stateDir,
-    })
-    done(`#${channel.name} → ${spec.path}`)
+      agents.push({
+        name: t.agent,
+        path: spec.path,
+        applicationId: t.applicationId,
+        botUserId: t.botUserId,
+        channelId: channel.id,
+        stateDir,
+      })
+      await persist()
+      done(`#${channel.name} → ${spec.path}`)
+    } catch (err) {
+      await persist()
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`\n  ✗ ${t.agent}: ${msg}`)
+      console.error(`  ${agents.length} of ${tokens.length} agent(s) provisioned and saved.`)
+      return 1
+    }
   }
 
   // 7. The channel plugin each session loads. Non-interactive, so we do it.
@@ -181,8 +196,7 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
     else step('! could not install the plugin — run `claude plugin install discord@claude-plugins-official`')
   }
 
-  await saveConfig({ guildId, ownerId, agents: [...config.agents, ...agents] })
-
+  await persist()
   console.log(`\n  ${agents.length} agent(s) ready. Start them with:\n\n    aquila up\n`)
   return 0
 }

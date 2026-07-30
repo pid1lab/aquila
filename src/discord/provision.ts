@@ -121,15 +121,27 @@ export function getGuild(token: string, guildId: string): Promise<Guild> {
  */
 export async function waitForGuild(
   token: string,
-  { timeoutMs = 300_000, intervalMs = 3_000 }: { timeoutMs?: number; intervalMs?: number } = {},
+  {
+    expectId,
+    timeoutMs = 300_000,
+    intervalMs = 3_000,
+  }: { expectId?: string; timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<Guild> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const guilds = await listGuilds(token)
-    const first = guilds[0]
-    if (first) return first
+    // Without expectId we're discovering the server, so any guild will do. With
+    // it we're confirming a specific join — and must not accept some unrelated
+    // server the bot already happened to belong to.
+    const match = expectId ? guilds.find(g => g.id === expectId) : guilds[0]
+    if (match) return match
     if (Date.now() >= deadline) {
-      throw new Error(`Bot was not added to any server within ${Math.round(timeoutMs / 1000)}s.`)
+      const secs = Math.round(timeoutMs / 1000)
+      throw new Error(
+        expectId
+          ? `Bot did not join server ${expectId} within ${secs}s.`
+          : `Bot was not added to any server within ${secs}s.`,
+      )
     }
     await new Promise(resolve => setTimeout(resolve, intervalMs))
   }
