@@ -100,9 +100,22 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
   // 2. Per-bot setup that needs no server: intent flag and identity.
   console.log()
   for (const t of tokens) {
+    // Load-bearing: without this the bot receives messages with empty content.
     await enableMessageContentIntent(t.token)
-    await renameBot(t.token, t.agent)
-    done(`${t.agent}: message content intent on, bot renamed`)
+
+    // Cosmetic, and Discord rate-limits username changes to ~2/hour per bot.
+    // Never fail a run over it — the agent works fine under its portal name.
+    let renamed = true
+    try {
+      await renameBot(t.token, t.agent)
+    } catch {
+      renamed = false
+    }
+    done(
+      renamed
+        ? `${t.agent}: message content intent on, bot renamed`
+        : `${t.agent}: message content intent on (rename skipped — rate limited?)`,
+    )
   }
 
   // 3. The server. The first bot provisions, so it needs MANAGE_CHANNELS and
