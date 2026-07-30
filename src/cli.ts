@@ -3,23 +3,23 @@
  * aquila — Discord channels for your Claude Code agents.
  */
 
-import { loadConfig } from './config.ts'
-import { inviteUrl } from './discord/provision.ts'
 import { runInit } from './init.ts'
+import { runDown, runStatus, runUp } from './up.ts'
 
 const USAGE = `
 aquila — Discord channels for your Claude Code agents
 
   aquila init <agent...>       provision bots and channels for each agent
-  aquila add <agent> <path>    add one agent to an existing server
-  aquila up [agent]            launch agent sessions
-  aquila down [agent]          stop agent sessions
+  aquila up [agent...]         start agents (returns immediately)
+  aquila down [agent...]       stop agents
   aquila status                show agents, channels, and session state
 
 An agent is a name, optionally with a working directory:
 
   aquila init backend frontend
   aquila init backend=~/src/api frontend=~/src/web
+
+up/down with no names act on every agent.
 
 Options for init:
   --web            paste tokens in a browser form instead of the terminal
@@ -31,28 +31,6 @@ Discord requires you to create each bot by hand in the Developer Portal
 yourself — POST /guilds has been closed to bots since 2025-07-15. Aquila
 does every other step.
 `
-
-async function status(): Promise<number> {
-  const config = await loadConfig()
-
-  if (!config.agents.length) {
-    console.log('\nNo agents configured. Run `aquila init <agent...>` to get started.\n')
-    return 0
-  }
-
-  console.log(`\nserver:  ${config.guildId ?? '(none)'}`)
-  console.log(`owner:   ${config.ownerId ?? '(not captured)'}\n`)
-
-  for (const agent of config.agents) {
-    const channel = agent.channelId ? `#${agent.name}` : '(no channel)'
-    console.log(`  ${agent.name.padEnd(14)} ${channel.padEnd(16)} ${agent.path}`)
-    if (!agent.channelId) {
-      console.log(`  ${''.padEnd(14)} install: ${inviteUrl(agent.applicationId, config.guildId)}`)
-    }
-  }
-  console.log()
-  return 0
-}
 
 function flagValue(argv: string[], flag: string): string | undefined {
   const i = argv.indexOf(flag)
@@ -66,7 +44,15 @@ const positional = rest.filter((a, i) => !a.startsWith('--') && rest[i - 1] !== 
 
 switch (command) {
   case 'status':
-    process.exit(await status())
+    process.exit(await runStatus())
+    break
+
+  case 'up':
+    process.exit(await runUp(positional))
+    break
+
+  case 'down':
+    process.exit(await runDown(positional))
     break
 
   case 'init': {
@@ -86,9 +72,7 @@ switch (command) {
   }
 
   case 'add':
-  case 'up':
-  case 'down':
-    console.error(`\`aquila ${command}\` is not implemented yet.`)
+    console.error('`aquila add` is not implemented yet.')
     process.exit(1)
     break
 

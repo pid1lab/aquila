@@ -91,9 +91,29 @@ walks you through installing them (one dropdown for the first, one click for the
 rest), creates a scoped channel each, writes `.env` and `access.json` per agent,
 and installs the channel plugin.
 
+## Running agents
+
+```sh
+aquila up              # start every agent; returns immediately
+aquila up backend      # or just one
+aquila status
+aquila down
+```
+
+Each agent runs as a detached session with its own pty and its own
+`DISCORD_STATE_DIR`, so each connects as its own bot. `up` verifies the Discord
+gateway actually came up before reporting success, and refuses to start an agent
+twice — two sessions on one token would answer every message twice.
+
+Agents outlive the shell but not a reboot; run `aquila up` again after one.
+
+> Not `claude --bg`: its daemon pre-warms spare sessions carrying an earlier
+> invocation's environment, so a second agent silently inherits the first
+> agent's token. Fine for one agent, broken for several.
+
 ## Status
 
-`init` and `status` work. `add`, `up`, and `down` are stubs.
+`init`, `up`, `down`, and `status` work. `add` is a stub.
 
 ```sh
 bun install

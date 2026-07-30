@@ -24,6 +24,8 @@ export interface Agent {
   channelId?: string
   /** Where this agent's plugin state lives; becomes DISCORD_STATE_DIR. */
   stateDir: string
+  /** Process group leader from the last `aquila up`, if any. */
+  pid?: number
   /** Extra flags for the claude invocation, e.g. --model. */
   claudeArgs?: string[]
 }
