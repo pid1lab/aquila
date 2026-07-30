@@ -11,6 +11,8 @@ aquila — Discord channels for your Claude Code agents
 
   aquila init <agent...>       provision bots and channels for each agent
   aquila up [agent...]         start agents (returns immediately)
+                               --trust  accept Claude Code's folder-trust
+                                        prompt for each agent's directory
   aquila down [agent...]       stop agents
   aquila status                show agents, channels, and session state
 
@@ -48,7 +50,7 @@ switch (command) {
     break
 
   case 'up':
-    process.exit(await runUp(positional))
+    process.exit(await runUp(positional, { trust: rest.includes('--trust') }))
     break
 
   case 'down':

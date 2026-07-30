@@ -19,12 +19,70 @@
  */
 
 import { spawn } from 'node:child_process'
-import { accessSync, constants, openSync, readFileSync, readdirSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  openSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, saveConfig, type Agent, type Config } from './config.ts'
 
 const CHANNEL_PLUGIN = 'plugin:discord@claude-plugins-official'
+const CLAUDE_CONFIG = join(homedir(), '.claude.json')
+
+// ---------------------------------------------------------------------------
+// Workspace trust
+// ---------------------------------------------------------------------------
+
+/**
+ * Claude Code asks "do you trust the files in this folder?" the first time it
+ * runs anywhere new, and blocks on it. In a detached session nobody can see or
+ * answer that prompt, so the agent hangs forever at an invisible dialog while
+ * looking like it started fine.
+ *
+ * There is no CLI flag for this — the dialog is only skipped in non-interactive
+ * mode (`-p`), which we can't use because the agent must stay resident. So we
+ * check first and refuse to launch rather than spawn something that can't work.
+ *
+ * Returns undefined when we can't tell, in which case we let the launch proceed.
+ */
+function isTrusted(path: string): boolean | undefined {
+  try {
+    const config = JSON.parse(readFileSync(CLAUDE_CONFIG, 'utf8')) as {
+      projects?: Record<string, { hasTrustDialogAccepted?: boolean }>
+    }
+    if (!config.projects) return undefined
+    return config.projects[path]?.hasTrustDialogAccepted === true
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Record trust for a directory, as `aquila up --trust` does.
+ *
+ * Deliberately NOT automatic: trusting a folder means Claude Code may read,
+ * edit, and execute anything in it, which is the user's call to make explicitly
+ * rather than a side effect of starting an agent.
+ */
+function markTrusted(path: string): boolean {
+  try {
+    const raw = readFileSync(CLAUDE_CONFIG, 'utf8')
+    const config = JSON.parse(raw) as {
+      projects?: Record<string, Record<string, unknown>>
+    }
+    config.projects ??= {}
+    config.projects[path] = { ...config.projects[path], hasTrustDialogAccepted: true }
+    writeFileSync(CLAUDE_CONFIG, JSON.stringify(config, null, 2) + '\n')
+    return true
+  } catch {
+    return false
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Process inspection (Linux /proc; degrades to "unknown" elsewhere)
@@ -162,6 +220,38 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+/** SIGTERM a process group, wait for it to actually die, escalate if it doesn't. */
+async function terminateGroup(pid: number, graceMs = 5_000): Promise<boolean> {
+  const groupGone = () => {
+    try {
+      process.kill(-pid, 0)
+      return false
+    } catch {
+      return true
+    }
+  }
+
+  try {
+    process.kill(-pid, 'SIGTERM')
+  } catch {
+    return true // already gone
+  }
+
+  const deadline = Date.now() + graceMs
+  while (Date.now() < deadline) {
+    if (groupGone()) return true
+    await sleep(250)
+  }
+
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    return true
+  }
+  await sleep(500)
+  return groupGone()
+}
+
 /** Wait for the agent's Discord gateway to actually come up. */
 async function waitForGateway(agent: Agent, timeoutMs = 45_000): Promise<boolean> {
   if (!HAS_PROC) return true
@@ -188,7 +278,7 @@ function resolveTargets(config: Config, names: string[]): Agent[] | string {
   return targets
 }
 
-export async function runUp(names: string[]): Promise<number> {
+export async function runUp(names: string[], options: { trust?: boolean } = {}): Promise<number> {
   const config = await loadConfig()
   if (!config.agents.length) {
     console.log('\nNo agents configured. Run `aquila init <agent...>` first.\n')
@@ -208,6 +298,35 @@ export async function runUp(names: string[]): Promise<number> {
     return 1
   }
   const bunDir = bun.slice(0, bun.lastIndexOf('/'))
+
+  // Trust check before anything is spawned — an untrusted directory produces an
+  // agent stuck on a dialog nobody can answer.
+  const untrusted = targets.filter(a => isTrusted(a.path) === false)
+  if (untrusted.length) {
+    if (options.trust) {
+      for (const agent of untrusted) {
+        const ok = markTrusted(agent.path)
+        console.log(
+          ok
+            ? `  ✓ trusted ${agent.path}`
+            : `  ✗ could not record trust for ${agent.path}`,
+        )
+        if (!ok) return 1
+      }
+    } else {
+      console.error('\n  ✗ Claude Code has not been trusted in:\n')
+      for (const agent of untrusted) console.error(`      ${agent.path}  (${agent.name})`)
+      console.error(
+        '\n  It would block on the "do you trust this folder?" prompt, which\n' +
+          '  nothing can answer in a detached session.\n\n' +
+          '  Either run `claude` once in each directory and accept, or:\n\n' +
+          '      aquila up --trust\n\n' +
+          '  Trusting a folder lets Claude Code read, edit, and execute files\n' +
+          '  there, so it is your call to make explicitly.\n',
+      )
+      return 1
+    }
+  }
 
   console.log()
   const pending: Agent[] = []
@@ -272,13 +391,16 @@ export async function runDown(names: string[]): Promise<number> {
       delete agent.pid
       continue
     }
-    try {
-      // Negative pid = the whole process group, so `script` and claude both go.
-      process.kill(-agent.pid, 'SIGTERM')
+    // Negative pid = the whole process group, so `script` and claude both go.
+    // Then confirm: a session sitting on an interactive prompt does not always
+    // die promptly, and reporting "stopped" for something still holding a
+    // Discord gateway is worse than reporting nothing.
+    const gone = await terminateGroup(agent.pid)
+    if (gone) {
       console.log(`  ✓ ${agent.name} stopped`)
       stopped++
-    } catch (err) {
-      console.log(`  ✗ ${agent.name}: ${err instanceof Error ? err.message : String(err)}`)
+    } else {
+      console.log(`  ✗ ${agent.name}: pid ${agent.pid} survived SIGTERM and SIGKILL`)
     }
     delete agent.pid
   }
