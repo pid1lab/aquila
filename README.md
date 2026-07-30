@@ -72,10 +72,28 @@ because separate bots buy things webhooks can't:
 Bot count and session count are independent either way — each agent gets its own
 Claude Code session regardless.
 
+## Setup
+
+```sh
+aquila init backend frontend reviewer
+aquila init backend=~/src/api frontend=~/src/web      # explicit working dirs
+aquila init backend frontend --web                    # paste tokens in a browser
+```
+
+Tokens are collected in one uninterrupted stretch — terminal prompts by default,
+so SSH and headless boxes work; `--web` serves a form on localhost for when you
+already have the portal open in a browser. Either way each token is validated
+against Discord as it lands, so a half-copied paste is caught immediately rather
+than three steps later.
+
+Then Aquila enables the intent flag on every bot, renames each to its agent name,
+walks you through installing them (one dropdown for the first, one click for the
+rest), creates a scoped channel each, writes `.env` and `access.json` per agent,
+and installs the channel plugin.
+
 ## Status
 
-Early. The provisioning primitives in `src/discord/provision.ts` are written;
-the CLI commands that drive them are not.
+`init` and `status` work. `add`, `up`, and `down` are stubs.
 
 ```sh
 bun install
