@@ -1,0 +1,7 @@
+node_modules/
+*.log
+
+# Credentials — bot tokens land in per-agent .env files.
+.env
+.env.*
+*.token
