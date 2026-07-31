@@ -198,17 +198,36 @@ function logPathFor(agent: Agent): string {
   return join(agent.stateDir, 'session.log')
 }
 
+/**
+ * Environment for an agent, with the launching Claude Code session scrubbed out.
+ *
+ * `aquila up` is often run from inside Claude Code, and a plain `...process.env`
+ * hands the agent that session's identity: CLAUDE_CODE_SESSION_ID, CLAUDE_PID,
+ * CLAUDE_CODE_CHILD_SESSION, CLAUDE_EFFORT. The agent then believes it is a
+ * child of the launching session — transcript saving silently turns off, effort
+ * is inherited, and permission handling follows the parent rather than the
+ * agent's own settings. Agents must be independent top-level sessions.
+ *
+ * ANTHROPIC_* is preserved: that's auth, not session identity.
+ */
+function agentEnv(agent: Agent, bunDir: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/^CLAUDE/i.test(key)) continue
+    env[key] = value
+  }
+  env.PATH = `${bunDir}:${process.env.PATH ?? ''}`
+  env.DISCORD_STATE_DIR = agent.stateDir
+  return env
+}
+
 function spawnAgent(agent: Agent, bunDir: string): number | undefined {
   const inner = shellQuote(['claude', '--channels', CHANNEL_PLUGIN])
   const log = openSync(logPathFor(agent), 'a', 0o600)
 
   const child = spawn('script', ['-qfec', inner, '/dev/null'], {
     cwd: agent.path,
-    env: {
-      ...process.env,
-      PATH: `${bunDir}:${process.env.PATH ?? ''}`,
-      DISCORD_STATE_DIR: agent.stateDir,
-    },
+    env: agentEnv(agent, bunDir),
     detached: true, // own process group, so it outlives this shell
     stdio: ['ignore', log, log],
   })
