@@ -54,6 +54,8 @@ export interface InitOptions {
   rename?: boolean
   /** Take over an existing channel that already has the agent's name. */
   adopt?: boolean
+  /** Try to open install links in a browser. Useless over SSH; opt-in. */
+  open?: boolean
 }
 
 /** `backend` or `backend=~/src/api` */
@@ -74,6 +76,25 @@ export function normaliseName(raw: string): string {
 
 export function expandHome(p: string): string {
   return p.startsWith('~') ? p.replace(/^~/, process.env.HOME ?? '~') : p
+}
+
+/**
+ * Best-effort "open this in a browser".
+ *
+ * Deliberately opt-in: over SSH the browser lives on the user's laptop, not on
+ * the box running Aquila, so opening one here would achieve nothing. Failures
+ * are silent — the link is always printed too.
+ */
+function openUrl(url: string): void {
+  if (process.env.SSH_CONNECTION && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return
+  for (const cmd of ['xdg-open', 'open', 'sensible-browser']) {
+    try {
+      spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref()
+      return
+    } catch {
+      /* try the next */
+    }
+  }
 }
 
 const step = (msg: string) => console.log(`  ${msg}`)
@@ -210,7 +231,9 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
     } else {
       console.log(`\n  Create a Discord server if you don't have one (+ → Create My Own),`)
       console.log(`  then install the first bot into it:\n`)
-      console.log(`    ${inviteUrl(provisioner.applicationId, undefined, PROVISIONER_PERMISSIONS)}\n`)
+      const firstUrl = inviteUrl(provisioner.applicationId, undefined, PROVISIONER_PERMISSIONS)
+      console.log(`    ${firstUrl}\n`)
+      if (options.open) openUrl(firstUrl)
       step('waiting for the install...')
       const guild = await waitForGuild(provisioner.token)
       guildId = guild.id
@@ -223,17 +246,35 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
   done(`owner ${ownerId}`)
 
   // 5. Remaining bots: one click each, server pre-selected.
+  //
+  // All at once rather than one-at-a-time-with-a-wait. The Authorize click is
+  // Discord's consent gate and can't be automated, but nothing requires us to
+  // serialise it — printing every link together lets you work through them back
+  // to back while we watch for all the joins concurrently.
+  const pendingInstall: typeof tokens = []
   for (const t of tokens.slice(1)) {
     const joined = await listGuilds(t.token)
-    if (joined.some(g => g.id === guildId)) {
-      done(`${t.agent}: already in the server`)
-      continue
+    if (joined.some(g => g.id === guildId)) done(`${t.agent}: already in the server`)
+    else pendingInstall.push(t)
+  }
+
+  if (pendingInstall.length) {
+    const n = pendingInstall.length
+    console.log(`\n  Install the remaining ${n} bot${n === 1 ? '' : 's'} — your server is`)
+    console.log(`  pre-selected, so each is a single Authorize click:\n`)
+    for (const t of pendingInstall) {
+      console.log(`    ${t.agent.padEnd(14)} ${inviteUrl(t.applicationId, guildId, AGENT_PERMISSIONS)}`)
     }
-    console.log(`\n  Install ${t.agent}:\n`)
-    console.log(`    ${inviteUrl(t.applicationId, guildId, AGENT_PERMISSIONS)}\n`)
-    step('waiting...')
-    await waitForGuild(t.token, { expectId: guildId })
-    done(`${t.agent}: joined`)
+    console.log()
+    if (options.open) pendingInstall.forEach(t => openUrl(inviteUrl(t.applicationId, guildId, AGENT_PERMISSIONS)))
+    step(`waiting for ${n === 1 ? 'it' : 'them'}...`)
+
+    await Promise.all(
+      pendingInstall.map(async t => {
+        await waitForGuild(t.token, { expectId: guildId })
+        done(`${t.agent}: joined`)
+      }),
+    )
   }
 
   // 6. Display names. Only possible once each bot is in the guild.
@@ -383,7 +424,9 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
     done('already in the server')
   } else {
     console.log(`\n  Install ${t.agent}:\n`)
-    console.log(`    ${inviteUrl(t.applicationId, config.guildId, AGENT_PERMISSIONS)}\n`)
+    const url = inviteUrl(t.applicationId, config.guildId, AGENT_PERMISSIONS)
+    console.log(`    ${url}\n`)
+    if (options.open) openUrl(url)
     step('waiting...')
     await waitForGuild(t.token, { expectId: config.guildId })
     done('joined')

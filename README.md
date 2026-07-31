@@ -47,7 +47,13 @@ Everything else is automatic:
 The first bot is installed before Aquila knows the server id, so you pick from a
 dropdown once. It also carries `PROVISIONER_PERMISSIONS` (adds `MANAGE_CHANNELS`
 and `MANAGE_ROLES`) because it creates every agent's channel. Bots after it need
-only `AGENT_PERMISSIONS` and install in a single click.
+only `AGENT_PERMISSIONS` and install in a single click — and their links are all
+printed together so you can work through them back to back while Aquila watches
+for every join at once.
+
+The Authorize click itself is Discord's consent gate and can't be automated;
+driving a browser session to bypass it would be the same ToS problem as
+automating the portal.
 
 For comparison, the official plugin's documented setup is nine steps *per agent*,
 including the OAuth2 URL Generator, six permission checkboxes, a pairing-code
@@ -107,6 +113,7 @@ agent you're pasting for.
 | `--rename` | rename each bot to its agent name (rate-limited, see above) |
 | `--adopt` | take over an existing channel with the agent's name |
 | `--no-plugin` | skip installing the channel plugin (`init` only) |
+| `--open` | try to open install links in a browser (skipped over SSH) |
 
 If a channel with the agent's name already exists, Aquila won't quietly create a
 duplicate (Discord permits them, and the result is two identical channels with

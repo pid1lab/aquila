@@ -36,6 +36,8 @@ Options for init and add:
                    the server nickname is set automatically regardless)
   --adopt          take over an existing channel that already has the
                    agent's name, rewriting its permissions
+  --open           try to open install links in a browser (skipped over
+                   SSH, where the browser isn't on this machine)
   --no-plugin      skip installing the discord channel plugin (init only)
 
 Discord requires you to create each bot by hand in the Developer Portal
@@ -88,6 +90,7 @@ switch (command) {
         noPlugin: rest.includes('--no-plugin'),
         rename: rest.includes('--rename'),
         adopt: rest.includes('--adopt'),
+        open: rest.includes('--open'),
       }),
     )
     break
