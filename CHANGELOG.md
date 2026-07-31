@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+**Other people can trigger agents, if you say so.** Shared channels allowed only
+you, and dropped everyone else before the mention check — silently, so a
+colleague @-mentioning an agent saw nothing at all.
+
+```sh
+aquila allow                  # who currently can
+aquila allow trz              # by @handle, display name, or nickname
+aquila allow --remove trz
+aquila allow --anyone         # any server member, still @mention-gated
+aquila allow --owner-only     # back to just you
+```
+
+Names, not snowflakes, in both directions: `allowFrom: ["1021487254104973352"]`
+is not a control anyone can audit by eye. Lookups use
+`GET /guilds/{id}/members/search`, which works on an ordinary bot token —
+`GET /guilds/{id}/members` does not, needing the privileged `GUILD_MEMBERS`
+intent. Ambiguous names list the candidates rather than guessing, and an exact
+handle always wins over a prefix match.
+
+The default is unchanged, and this reaches shared channels only: an agent's
+private channel stays yours whatever the guest list says. Adding a bot is
+refused, since the plugin drops inbound bot messages anyway. `aquila status` now
+prints the policy in force.
+
 **Agents find their own channels.** Every agent now joins each channel its bot
 can see, not just the private one Aquila made for it. `init`, `add`, `up` and
 `status` refresh this in passing; `aquila sync` forces it, `aquila sync --off`

@@ -154,6 +154,7 @@ aquila up backend      # or just one
 aquila status
 aquila down
 aquila sync            # refresh which channels agents can reach
+aquila allow           # who can trigger agents in shared channels
 ```
 
 Each agent runs as a detached session with its own pty and its own
@@ -245,9 +246,36 @@ Two rules keep this from widening anything that matters:
 
 - Discovered channels get `requireMention: true`, unlike an agent's private
   channel. In a room several agents share, you address one at a time.
-- They keep `allowFrom: [<your id>]`. Discovery changes *where* you can summon an
-  agent, never *who* can drive it — a stranger in a public channel is dropped
-  before the mention check runs.
+- They allow only you to trigger an agent, until you say otherwise. Discovery
+  changes *where* you can summon an agent, never *who* can drive it.
+
+## Letting other people in
+
+Triggering an agent makes a Claude Code session on your machine run a turn, so
+by default nobody else can, and their messages are dropped before the mention
+check — silently, like everything else this plugin refuses.
+
+```sh
+aquila allow                  # who currently can
+aquila allow trz              # by @handle, display name, or nickname
+aquila allow --remove trz
+aquila allow --anyone         # any server member, still @mention-gated
+aquila allow --owner-only     # back to just you
+```
+
+Names, not snowflakes. `allowFrom: ["1021487254104973352"]` is not a security
+control anyone can audit by eye, so Aquila resolves names on the way in and back
+to names on the way out — via `GET /guilds/{id}/members/search`, which works on
+an ordinary bot token. (`GET /guilds/{id}/members` does not: it needs the
+privileged `GUILD_MEMBERS` intent.) A raw id still works if you have one.
+
+This applies only to shared channels. Each agent's private channel stays yours
+alone, whatever the guest list says. Adding a bot is refused — the plugin drops
+inbound bot messages, so agents cannot wake each other by design.
+
+Guests can *trigger*; they were always able to be *read*. `fetch_messages`
+returns unfiltered channel history, so an agent you wake can already see what
+everyone else wrote, whether or not they're on the list.
 
 Agents never join each other's private channels; Discord's own overwrites deny
 it, and Aquila skips them regardless. A group you add to `access.json` by hand is
@@ -261,8 +289,8 @@ the scheduler: ask one agent something, then ask another to build on it.
 
 ## Status
 
-`init`, `add`, `up`, `down`, `status`, and `sync` all work and are verified
-against live Discord.
+`init`, `add`, `up`, `down`, `status`, `sync`, and `allow` all work and are
+verified against live Discord.
 
 ```sh
 bun install
@@ -288,10 +316,12 @@ src/
   tokens.ts              token collection — terminal prompts and the --web form
   up.ts                  agent lifecycle: detached pty sessions, up/down/status
   sync.ts                channel discovery — probe access, maintain access.json
+  allow.ts               who may trigger an agent in a shared channel
   config.ts              ~/.aquila state, per-agent state dirs, settings seeding
   discord/
     rest.ts              minimal REST client with 429 handling
     constants.ts         permission and flag bitfields, from discord-api-types
+    people.ts            member search and id→name resolution
     provision.ts         the provisioning chain
 spike/
   provision.ts           runnable validation of the chain

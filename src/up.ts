@@ -32,6 +32,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, saveConfig, type Agent, type Config } from './config.ts'
 import { autoSync } from './sync.ts'
+import { triggerSummary } from './allow.ts'
 
 const CHANNEL_PLUGIN = 'plugin:discord@claude-plugins-official'
 const CLAUDE_CONFIG = join(homedir(), '.claude.json')
@@ -475,7 +476,8 @@ export async function runStatus(options: { noAutoChannels?: boolean } = {}): Pro
   if (!options.noAutoChannels) await autoSync(config, config.agents)
 
   console.log(`\nserver:  ${config.guildId ?? '(none)'}`)
-  console.log(`owner:   ${config.ownerId ?? '(not captured)'}\n`)
+  console.log(`owner:   ${config.ownerId ?? '(not captured)'}`)
+  console.log(`trigger: ${triggerSummary(config)}\n`)
   const rows = config.agents.map(agent => {
     const running = agent.pid ? isAgentProcess(agent.pid, agent.stateDir) : false
     const gateway = running ? gatewayPidFor(agent.stateDir) : undefined

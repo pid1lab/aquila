@@ -46,6 +46,14 @@ export interface Config {
    * strict default in place: channels are reachable only once opted in by hand.
    */
   autoChannels?: boolean
+  /**
+   * Who besides you can trigger an agent in a shared channel. Snowflakes, or
+   * `'anyone'` for every server member. Absent means you alone.
+   *
+   * A mention is still required either way, and this never applies to an
+   * agent's own private channel — that stays yours.
+   */
+  guests?: string[] | 'anyone'
   agents: Agent[]
 }
 

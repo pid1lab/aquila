@@ -7,6 +7,7 @@ import { runAdd, runInit } from './init.ts'
 import { runDown, runStatus, runUp } from './up.ts'
 import { runMove, runSet } from './manage.ts'
 import { runSync } from './sync.ts'
+import { runAllow } from './allow.ts'
 
 const USAGE = `
 aquila — Discord channels for your Claude Code agents
@@ -21,6 +22,11 @@ aquila — Discord channels for your Claude Code agents
   aquila sync [agent...]       opt agents into every channel they can see
                                --off / --on  stop or resume doing this
                                              automatically
+  aquila allow [name...]       let other people trigger agents in shared
+                               channels; no name lists who currently can
+                               --remove <name>  take someone off the list
+                               --anyone         any member of the server
+                               --owner-only     back to just you
   aquila move <agent> <path>   move an agent to a new working directory
   aquila set <agent> k=v       change a setting (claudeArgs)
 
@@ -81,6 +87,16 @@ switch (command) {
   case 'sync':
     process.exit(
       await runSync(positional, { off: rest.includes('--off'), on: rest.includes('--on') }),
+    )
+    break
+
+  case 'allow':
+    process.exit(
+      await runAllow(positional, {
+        remove: rest.includes('--remove') || rest.includes('--rm'),
+        anyone: rest.includes('--anyone'),
+        ownerOnly: rest.includes('--owner-only'),
+      }),
     )
     break
 

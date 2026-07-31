@@ -55,8 +55,27 @@ export interface AgentSync {
   agent: Agent
   added: Channel[]
   removed: string[]
+  /** Managed channels whose trigger list was brought back in line with config. */
+  retuned: string[]
   /** Set when this agent could not be synced; the others still are. */
   error?: string
+}
+
+/**
+ * Who may trigger an agent in a shared channel.
+ *
+ * An empty list is not "nobody" — the plugin reads it as "any member", still
+ * subject to the mention check. That is exactly what `guests: 'anyone'` wants,
+ * and why the owner-only case has to name the owner explicitly.
+ */
+export function triggerAllowFrom(config: Config): string[] {
+  if (config.guests === 'anyone') return []
+  const owner = config.ownerId ? [config.ownerId] : []
+  return [...new Set([...owner, ...(config.guests ?? [])])]
+}
+
+function sameMembers(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every(v => b.includes(v))
 }
 
 async function readAccess(stateDir: string): Promise<AccessFile> {
@@ -101,9 +120,9 @@ async function syncAgent(
   agent: Agent,
   config: Config,
   channels: Channel[],
-  ownerId: string,
 ): Promise<AgentSync> {
-  const result: AgentSync = { agent, added: [], removed: [] }
+  const result: AgentSync = { agent, added: [], removed: [], retuned: [] }
+  const wanted = triggerAllowFrom(config)
 
   const token = await readAgentToken(agent.stateDir)
   if (!token) {
@@ -132,14 +151,24 @@ async function syncAgent(
   const current: string[] = []
   for (const [i, channel] of candidates.entries()) {
     if (!visibility[i]) continue
+    const known = channel.id in groups
     // Already configured by hand: leave the user's settings alone, and don't
     // claim it, or a later sync would retract a group we never created.
-    if (channel.id in groups && !previous.has(channel.id)) continue
+    if (known && !previous.has(channel.id)) continue
 
     current.push(channel.id)
-    if (!(channel.id in groups)) {
-      groups[channel.id] = { requireMention: true, allowFrom: [ownerId] }
+    if (!known) {
+      groups[channel.id] = { requireMention: true, allowFrom: wanted }
       result.added.push(channel)
+      continue
+    }
+    // Ours already: keep the trigger list in step with `aquila allow`, which is
+    // the only way a policy change reaches channels joined on an earlier run.
+    // requireMention is left alone — there is no config for it to disagree with.
+    const policy = groups[channel.id]!
+    if (!sameMembers(policy.allowFrom ?? [], wanted)) {
+      policy.allowFrom = [...wanted]
+      result.retuned.push(channel.id)
     }
   }
 
@@ -153,7 +182,7 @@ async function syncAgent(
     }
   }
 
-  if (result.added.length || result.removed.length) {
+  if (result.added.length || result.removed.length || result.retuned.length) {
     access.groups = groups
     await writeFile(
       join(agent.stateDir, 'access.json'),
@@ -203,9 +232,14 @@ export async function syncChannels(config: Config, targets: Agent[]): Promise<Ag
 
   const results: AgentSync[] = []
   for (const agent of targets) {
-    results.push(await syncAgent(agent, config, channels, config.ownerId))
+    results.push(await syncAgent(agent, config, channels))
   }
   return results
+}
+
+/** Did anything actually move? */
+export function changedCount(results: AgentSync[]): number {
+  return results.reduce((n, r) => n + r.added.length + r.removed.length + r.retuned.length, 0)
 }
 
 /** Print only what changed. Silence means every agent was already correct. */
@@ -217,6 +251,9 @@ export function reportSync(results: AgentSync[], options: { verbose?: boolean } 
     }
     for (const channel of r.added) console.log(`  + ${r.agent.name} joined #${channel.name}`)
     for (const id of r.removed) console.log(`  - ${r.agent.name} left ${id} (no longer visible)`)
+    if (options.verbose && r.retuned.length) {
+      console.log(`  ~ ${r.agent.name}: updated who can trigger it in ${r.retuned.length} channel(s)`)
+    }
   }
 }
 
@@ -273,7 +310,7 @@ export async function runSync(names: string[], options: { off?: boolean; on?: bo
   const results = await syncChannels(config, targets)
   reportSync(results, { verbose: true })
 
-  const changed = results.reduce((n, r) => n + r.added.length + r.removed.length, 0)
+  const changed = changedCount(results)
   const failed = results.filter(r => r.error).length
 
   if (!changed) console.log('  Nothing to change — every agent is already in the channels it can see.')
