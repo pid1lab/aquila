@@ -59,6 +59,52 @@ export function stateDirFor(agentName: string): string {
 }
 
 /**
+ * The channel plugin's own MCP tools.
+ *
+ * These need pre-approval or the agent asks permission *to speak on Discord* —
+ * `reply` is how it answers at all, so without this every single message
+ * triggers a DM with Allow/Deny buttons and the agent is effectively unusable.
+ *
+ * Named `mcp__<server>__<tool>`, where the server is `plugin:discord:discord`
+ * with colons replaced by underscores.
+ */
+export const CHANNEL_TOOLS = [
+  'mcp__plugin_discord_discord__reply',
+  'mcp__plugin_discord_discord__react',
+  'mcp__plugin_discord_discord__edit_message',
+  'mcp__plugin_discord_discord__fetch_messages',
+  'mcp__plugin_discord_discord__download_attachment',
+]
+
+/**
+ * Pre-approve the channel tools in the agent's working directory.
+ *
+ * Written to `.claude/settings.local.json` rather than `settings.json`: the
+ * local file is the conventional home for machine-specific settings and is
+ * normally gitignored, so we don't commit Aquila's plumbing into someone's
+ * repo. Existing entries are preserved — an agent's directory is usually a real
+ * project whose settings are none of our business.
+ */
+export async function writeAgentSettings(workdir: string): Promise<void> {
+  const dir = join(workdir, '.claude')
+  const file = join(dir, 'settings.local.json')
+
+  let settings: { permissions?: { allow?: string[] } } = {}
+  try {
+    settings = JSON.parse(await readFile(file, 'utf8'))
+  } catch {
+    /* absent or unreadable — start fresh rather than fail provisioning */
+  }
+
+  const existing = settings.permissions?.allow ?? []
+  const merged = [...new Set([...existing, ...CHANNEL_TOOLS])]
+  settings.permissions = { ...settings.permissions, allow: merged }
+
+  await mkdir(dir, { recursive: true })
+  await writeFile(file, JSON.stringify(settings, null, 2) + '\n')
+}
+
+/**
  * Write an agent's bot token where the channel plugin expects it.
  * Mode 0600 — this is a credential.
  */

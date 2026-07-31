@@ -28,6 +28,7 @@ import {
   saveConfig,
   stateDirFor,
   writeAgentAccess,
+  writeAgentSettings,
   writeAgentToken,
   type Agent,
 } from './config.ts'
@@ -182,6 +183,9 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
       const stateDir = stateDirFor(t.agent)
       await writeAgentToken(stateDir, t.token)
       await writeAgentAccess(stateDir, ownerId, channel.id)
+      // Without this the agent needs permission to use `reply` — i.e. to answer
+      // at all — and every message becomes a DM approval.
+      await writeAgentSettings(spec.path)
 
       agents.push({
         name: t.agent,
