@@ -5,6 +5,7 @@
 
 import { runAdd, runInit } from './init.ts'
 import { runDown, runStatus, runUp } from './up.ts'
+import { runMove, runSet } from './manage.ts'
 
 const USAGE = `
 aquila — Discord channels for your Claude Code agents
@@ -16,6 +17,8 @@ aquila — Discord channels for your Claude Code agents
                                         prompt for each agent's directory
   aquila down [agent...]       stop agents
   aquila status                show agents, channels, and session state
+  aquila move <agent> <path>   move an agent to a new working directory
+  aquila set <agent> k=v       change a setting (claudeArgs)
 
 Agents are named after their Discord application, so name each app in the
 portal what you want the agent called. Arguments are working directories:
@@ -61,6 +64,14 @@ switch (command) {
 
   case 'down':
     process.exit(await runDown(positional))
+    break
+
+  case 'move':
+    process.exit(await runMove(positional, { trust: rest.includes('--trust') }))
+    break
+
+  case 'set':
+    process.exit(await runSet(positional))
     break
 
   case 'init': {

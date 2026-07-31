@@ -25,6 +25,7 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
@@ -50,7 +51,7 @@ const CLAUDE_CONFIG = join(homedir(), '.claude.json')
  *
  * Returns undefined when we can't tell, in which case we let the launch proceed.
  */
-function isTrusted(path: string): boolean | undefined {
+export function isTrusted(path: string): boolean | undefined {
   try {
     const config = JSON.parse(readFileSync(CLAUDE_CONFIG, 'utf8')) as {
       projects?: Record<string, { hasTrustDialogAccepted?: boolean }>
@@ -69,7 +70,7 @@ function isTrusted(path: string): boolean | undefined {
  * edit, and execute anything in it, which is the user's call to make explicitly
  * rather than a side effect of starting an agent.
  */
-function markTrusted(path: string): boolean {
+export function markTrusted(path: string): boolean {
   try {
     const raw = readFileSync(CLAUDE_CONFIG, 'utf8')
     const config = JSON.parse(raw) as {
@@ -131,12 +132,37 @@ function alive(pid: number): boolean {
  * unrelated process? `down` sends signals to a process group, so guessing wrong
  * would kill something innocent.
  */
-function isAgentProcess(pid: number, stateDir: string): boolean {
+export function isAgentProcess(pid: number, stateDir: string): boolean {
   if (!alive(pid)) return false
   if (!HAS_PROC) return true // can't verify; caller degrades gracefully
   const cmd = cmdlineOf(pid)
   if (!cmd.includes('claude') && !cmd.includes('script')) return false
   return envOf(pid, 'DISCORD_STATE_DIR') === stateDir
+}
+
+/** Where a running agent actually is, which may differ from config after an edit. */
+function actualCwd(pid: number): string | undefined {
+  if (!HAS_PROC) return undefined
+  // The recorded pid is `script`; the claude session is its child.
+  for (const candidate of [...childPids(pid), pid]) {
+    try {
+      return readlinkSync(`/proc/${candidate}/cwd`)
+    } catch {
+      /* try the next */
+    }
+  }
+  return undefined
+}
+
+function childPids(pid: number): number[] {
+  try {
+    return readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(Number)
+  } catch {
+    return []
+  }
 }
 
 /** Find the plugin's gateway process for a given agent, if it has connected. */
@@ -222,7 +248,7 @@ function agentEnv(agent: Agent, bunDir: string): NodeJS.ProcessEnv {
 }
 
 function spawnAgent(agent: Agent, bunDir: string): number | undefined {
-  const inner = shellQuote(['claude', '--channels', CHANNEL_PLUGIN])
+  const inner = shellQuote(['claude', '--channels', CHANNEL_PLUGIN, ...(agent.claudeArgs ?? [])])
   const log = openSync(logPathFor(agent), 'a', 0o600)
 
   const child = spawn('script', ['-qfec', inner, '/dev/null'], {
@@ -442,6 +468,10 @@ export async function runStatus(): Promise<number> {
   const rows = config.agents.map(agent => {
     const running = agent.pid ? isAgentProcess(agent.pid, agent.stateDir) : false
     const gateway = running ? gatewayPidFor(agent.stateDir) : undefined
+    // A session's working directory is fixed at spawn, so a config edit leaves
+    // the two disagreeing. Say so rather than reporting the config as truth.
+    const actual = running && agent.pid ? actualCwd(agent.pid) : undefined
+    const moved = actual !== undefined && actual !== agent.path
     return {
       name: agent.name,
       channel: `#${agent.name}`,
@@ -450,7 +480,7 @@ export async function runStatus(): Promise<number> {
         : gateway
           ? `connected · pid ${agent.pid}`
           : `no gateway · pid ${agent.pid}`,
-      path: agent.path,
+      path: moved ? `${agent.path}  ⚠ running in ${actual}` : agent.path,
     }
   })
 

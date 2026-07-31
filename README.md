@@ -131,6 +131,24 @@ twice — two sessions on one token would answer every message twice.
 
 Agents outlive the shell but not a reboot; run `aquila up` again after one.
 
+## Editing an agent
+
+```sh
+aquila move backend ~/src/new-api      # change working directory
+aquila set backend claudeArgs=--model opus
+```
+
+A session's working directory is fixed at spawn, so editing `path` in
+`~/.aquila/config.json` by hand does nothing to a running agent — it keeps
+working in the old directory while `status` reports the new one. `move` avoids
+that: it trust-checks the destination, carries over tool pre-approval, updates
+config, and restarts the agent if it was running. `status` also flags any
+divergence it finds with `⚠ running in …`.
+
+`set` handles the rest. Everything it changes is read at spawn, so it warns when
+the agent needs a restart to pick the change up, and it redirects `path` to
+`move` rather than doing half the job.
+
 **First run in a new directory** needs Claude Code's workspace trust. There's no
 CLI flag for it, and a detached session blocks forever on a prompt nobody can
 see, so `up` checks first and refuses with instructions. `aquila up --trust`
@@ -189,8 +207,7 @@ hold. If the bot isn't in a server yet it prints an install URL and waits.
 
 Use a throwaway application: the spike renames the bot and creates a channel.
 
-Known gaps: no way to change an agent's working directory short of editing
-`~/.aquila/config.json`; the plugin is installed at user scope, so every Claude
+Known gaps: the plugin is installed at user scope, so every Claude
 Code session on the machine spawns an idle Discord MCP server; `script -qfec` is
 Linux-specific, so macOS needs work.
 
