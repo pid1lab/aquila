@@ -3,11 +3,11 @@
 **Discord channels for your Claude Code agents.**
 
 One bot per agent, one channel per agent, each backed by its own Claude Code
-session in its own working directory. Aquila provisions the bots, builds the
-server, scopes the channels, wires up access control, and launches the sessions.
+session in its own working directory. Aquila provisions the bots, scopes the
+channels, wires up access control, and runs the sessions.
 
-```
-aquila init backend frontend reviewer
+```sh
+aquila init ~/src/api ~/src/web
 aquila up
 ```
 
@@ -36,13 +36,13 @@ Everything else is automatic:
 | Step | How |
 | --- | --- |
 | Enable Message Content intent | `PATCH /applications/@me`, `flags: 1<<19` |
-| Name the bot, set its avatar | `PATCH /users/@me` |
 | Learn which server you made | `GET /users/@me/guilds` after the first install |
 | Learn your snowflake | that guild's `owner_id` — no pairing code, no Developer Mode |
 | Create a channel per agent, scoped so each bot sees only its own | `POST /guilds/{id}/channels` with permission overwrites |
 | One-click installs for agents 2..N, server pre-selected | `guild_id` + `disable_guild_select=true` |
+| Pre-approve the plugin's own tools | `.claude/settings.local.json` per agent |
 | Install the channel plugin | `claude plugin install discord@claude-plugins-official` |
-| Write tokens, access policy, launchers | per-agent state dirs |
+| Write tokens and access policy | per-agent state dirs |
 
 The first bot is installed before Aquila knows the server id, so you pick from a
 dropdown once. It also carries `PROVISIONER_PERMISSIONS` (adds `MANAGE_CHANNELS`
@@ -60,12 +60,14 @@ and that would drop the manual work to one portal trip total. We chose not to,
 because separate bots buy things webhooks can't:
 
 - **Native `@mention` autocomplete.** Webhook personas aren't real users, so
-  Discord won't autocomplete them.
+  Discord won't autocomplete them. This turns out to matter a lot — it's what
+  makes a shared room work (see below).
 - **Per-agent typing indicators and presence.** One bot means one ambiguous
   "typing…" no matter which agent is working.
 - **Discord-enforced channel isolation.** With separate bots, "the frontend agent
-  cannot see #backend" is enforced by Discord. With one bot it's enforced by our
-  routing code, and a bug there leaks context between agents.
+  cannot see #backend" is enforced by Discord — cross-channel reads return 403.
+  With one bot it's enforced by our routing code, and a bug there leaks context
+  between agents.
 - **Native quote-replies.** `POST /webhooks/…` has no `message_reference`
   parameter, so webhook messages cannot reply to anything.
 
@@ -75,21 +77,43 @@ Claude Code session regardless.
 ## Setup
 
 ```sh
-aquila init backend frontend reviewer
-aquila init backend=~/src/api frontend=~/src/web      # explicit working dirs
-aquila init backend frontend --web                    # paste tokens in a browser
+aquila init ~/src/api ~/src/web     # two agents, in those directories
+aquila init                         # prompts for a directory per agent
+aquila init ~/src/api --web         # paste tokens in a browser form
+aquila add ~/src/docs               # one more, later
 ```
+
+**Agents are named after their Discord application.** You already name each app
+in the portal, so that name becomes the agent's name, its channel name, and the
+bot's display name — all agreeing by construction, with no rename. `"Orders API"`
+becomes agent `orders-api` and channel `#orders-api`. Duplicates get a numeric
+suffix.
+
+Renaming bots to match is available as `--rename`, but Discord rate-limits
+username changes to roughly 2/hour per bot, which is exactly why it isn't the
+default.
 
 Tokens are collected in one uninterrupted stretch — terminal prompts by default,
 so SSH and headless boxes work; `--web` serves a form on localhost for when you
 already have the portal open in a browser. Either way each token is validated
 against Discord as it lands, so a half-copied paste is caught immediately rather
-than three steps later.
+than three steps later. `--web` needs a directory per agent so the form knows how
+many fields to render.
 
-Then Aquila enables the intent flag on every bot, renames each to its agent name,
-walks you through installing them (one dropdown for the first, one click for the
-rest), creates a scoped channel each, writes `.env` and `access.json` per agent,
-and installs the channel plugin.
+| Flag | Effect |
+| --- | --- |
+| `--web` | collect tokens in a browser form instead of the terminal |
+| `--port <n>` | port for `--web` (default 7777) |
+| `--rename` | rename each bot to its agent name (rate-limited, see above) |
+| `--adopt` | take over an existing channel with the agent's name |
+| `--no-plugin` | skip installing the channel plugin (`init` only) |
+
+If a channel with the agent's name already exists, Aquila won't quietly create a
+duplicate (Discord permits them, and the result is two identical channels with
+messages vanishing into the wrong one). A channel that already grants the bot
+access is adopted silently — that's a re-run of a partly-finished `init`, and
+resuming is correct. Anything else is refused unless you pass `--adopt`, which
+rewrites that channel's permissions.
 
 ## Running agents
 
@@ -107,38 +131,78 @@ twice — two sessions on one token would answer every message twice.
 
 Agents outlive the shell but not a reboot; run `aquila up` again after one.
 
-> Not `claude --bg`: its daemon pre-warms spare sessions carrying an earlier
-> invocation's environment, so a second agent silently inherits the first
-> agent's token. Fine for one agent, broken for several.
+**First run in a new directory** needs Claude Code's workspace trust. There's no
+CLI flag for it, and a detached session blocks forever on a prompt nobody can
+see, so `up` checks first and refuses with instructions. `aquila up --trust`
+records it. That's deliberately explicit: trusting a folder lets Claude Code
+read, edit, and execute everything in it.
+
+> Not `claude --bg`. Its daemon pre-warms spare sessions carrying an earlier
+> invocation's environment, so a second agent silently inherits the first agent's
+> token and both bots answer every message. Fine for one agent, broken for
+> several. Upstream has the same class of bug on Telegram
+> ([#4647](https://github.com/anthropics/claude-plugins-official/issues/4647)).
+
+## Permissions
+
+Each agent's working directory gets a `.claude/settings.local.json` pre-approving
+the channel plugin's own MCP tools. Without it the agent needs permission to call
+`reply` — that is, permission to speak on Discord at all — so every single
+message becomes a DM approval. Existing settings are merged, never replaced.
+
+Beyond that, Claude Code auto-approves read-only commands (`ls`, `git log`,
+`whoami`), so the approval flow only fires for genuinely consequential actions:
+writes outside the workspace, network calls, destructive commands. Those arrive
+as a DM with **Allow** / **Deny** / **See more** buttons, and clicking Allow is
+independently authenticated against the allowlist.
+
+Prompts go to DM rather than the channel by design — they carry the command or
+file path, which would leak to anyone who can read the channel. Upstream declined
+channel delivery for that reason
+([claude-code#37797](https://github.com/anthropics/claude-code/issues/37797)).
+Note `--dangerously-skip-permissions` does **not** cover MCP tools.
+
+## A shared room
+
+Agents can also join a common channel alongside their private one. Opt each agent
+into it with `requireMention: true` in its `access.json`, and address them with
+`@backend` — real `@mention` autocomplete, because these are real bot users.
+
+Agents can *read* each other there: `fetch_messages` returns unfiltered channel
+history, including other bots' replies. They can't be *woken* by each other —
+the plugin drops inbound bot messages — so collaboration works with you as the
+scheduler: ask one agent something, then ask another to build on it.
 
 ## Status
 
-`init`, `up`, `down`, and `status` work. `add` is a stub.
+`init`, `add`, `up`, `down`, and `status` all work and are verified against live
+Discord.
 
 ```sh
 bun install
 bun spike/provision.ts <throwaway-bot-token> --cleanup
 ```
 
-The spike exercises the full chain — token → intent flag → bot rename → discover
-guild → owner id → scoped channel → invite — and reports which links hold. If the
-bot isn't in a server yet it prints an install URL and waits for you.
+The spike exercises the provisioning chain — token → intent flag → bot rename →
+discover guild → owner id → scoped channel → invite — and reports which links
+hold. If the bot isn't in a server yet it prints an install URL and waits.
 
 Use a throwaway application: the spike renames the bot and creates a channel.
 
-Spike results so far (2026-07-30): intent flag and `renameBot` both confirmed
-working against a live token. `POST /guilds` confirmed dead for bots, which is
-why the server is yours to create.
+Known gaps: no way to change an agent's working directory short of editing
+`~/.aquila/config.json`; the plugin is installed at user scope, so every Claude
+Code session on the machine spawns an idle Discord MCP server; `script -qfec` is
+Linux-specific, so macOS needs work.
 
 ## Layout
 
 ```
 src/
   cli.ts                 command dispatch
-  init.ts                provisioning flow
+  init.ts                provisioning flow — init and add
   tokens.ts              token collection — terminal prompts and the --web form
   up.ts                  agent lifecycle: detached pty sessions, up/down/status
-  config.ts              ~/.aquila state, per-agent state dirs, access.json seeding
+  config.ts              ~/.aquila state, per-agent state dirs, settings seeding
   discord/
     rest.ts              minimal REST client with 429 handling
     constants.ts         permission and application-flag bitfields
