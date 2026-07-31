@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+**Agents keep their conversation across restarts.** An agent is the durable
+thing — bot, channel, directory — and a Claude Code session is a conversation it
+drives. Those used to be the same object by accident: every `up` started a fresh
+session and abandoned the old transcript, so a restart meant the bot forgot
+everything.
+
+```sh
+aquila sessions                 # conversations per agent, ● marks the bound one
+aquila bind backend 368592fb    # point the bot at a different conversation
+aquila bind backend --new
+aquila up --new                 # fresh conversation for this start only
+```
+
+Aquila mints the session id rather than discovering it afterwards: `claude
+--session-id <uuid>` accepts an id we generate and writes the transcript to
+`<uuid>.jsonl`, and `--resume <uuid>` reuses that id instead of forking. So the
+mapping is a pointer Aquila owns. `status` gained a SESSION column.
+
+Transcript directories are located by encoding the working directory the way
+Claude Code does, then verified against the `cwd` recorded inside the
+transcripts — so an encoding change degrades to a scan rather than breaking.
+
+Resume replays the transcript into context, so a long-lived session grows until
+it compacts; `sessions` shows turns and size so that is visible rather than a
+surprise.
+
 **Agents are told who the other agents are.** `up` now appends a short briefing
 to each session's system prompt — the agent's own name and private channel, the
 shared channels it's in, and the other agents with their working directories.

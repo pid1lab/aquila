@@ -8,6 +8,7 @@ import { runDown, runStatus, runUp } from './up.ts'
 import { runMove, runSet } from './manage.ts'
 import { runSync } from './sync.ts'
 import { runAllow } from './allow.ts'
+import { runBind, runSessions } from './sessions.ts'
 
 const USAGE = `
 aquila — Discord channels for your Claude Code agents
@@ -19,6 +20,11 @@ aquila — Discord channels for your Claude Code agents
                                            prompt for each agent's directory
                                --no-brief  don't tell the agent who the other
                                            agents are
+                               --new       start a fresh conversation instead
+                                           of resuming the agent's own
+  aquila sessions [agent...]   conversations in each agent's directory
+  aquila bind <agent> <id>     point an agent at a different conversation
+                               --new  start a fresh one
   aquila down [agent...]       stop agents
   aquila status                show agents, channels, and session state
   aquila sync [agent...]       opt agents into every channel they can see
@@ -88,6 +94,7 @@ switch (command) {
         trust: rest.includes('--trust'),
         noAutoChannels,
         noBrief: rest.includes('--no-brief'),
+        newSession: rest.includes('--new'),
       }),
     )
     break
@@ -96,6 +103,14 @@ switch (command) {
     process.exit(
       await runSync(positional, { off: rest.includes('--off'), on: rest.includes('--on') }),
     )
+    break
+
+  case 'sessions':
+    process.exit(await runSessions(positional))
+    break
+
+  case 'bind':
+    process.exit(await runBind(positional, { fresh: rest.includes('--new') }))
     break
 
   case 'allow':

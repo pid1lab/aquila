@@ -34,6 +34,7 @@ import { loadConfig, saveConfig, type Agent, type Config } from './config.ts'
 import { autoSync, reachOf } from './sync.ts'
 import { triggerSummary } from './allow.ts'
 import { briefingFor, type Reach } from './brief.ts'
+import { sessionArgsFor } from './sessions.ts'
 
 const CHANNEL_PLUGIN = 'plugin:discord@claude-plugins-official'
 const CLAUDE_CONFIG = join(homedir(), '.claude.json')
@@ -250,13 +251,19 @@ function agentEnv(agent: Agent, bunDir: string): NodeJS.ProcessEnv {
   return env
 }
 
-function spawnAgent(agent: Agent, bunDir: string, briefing?: string): number | undefined {
-  // Before claudeArgs, so an explicit --append-system-prompt of the user's own
-  // lands after ours rather than being buried by it.
+function spawnAgent(
+  agent: Agent,
+  bunDir: string,
+  briefing?: string,
+  sessionArgs: string[] = [],
+): number | undefined {
+  // Before claudeArgs, so an explicit flag of the user's own lands after ours
+  // rather than being buried by it.
   const inner = shellQuote([
     'claude',
     '--channels',
     CHANNEL_PLUGIN,
+    ...sessionArgs,
     ...(briefing ? ['--append-system-prompt', briefing] : []),
     ...(agent.claudeArgs ?? []),
   ])
@@ -336,7 +343,12 @@ function resolveTargets(config: Config, names: string[]): Agent[] | string {
 
 export async function runUp(
   names: string[],
-  options: { trust?: boolean; noAutoChannels?: boolean; noBrief?: boolean } = {},
+  options: {
+    trust?: boolean
+    noAutoChannels?: boolean
+    noBrief?: boolean
+    newSession?: boolean
+  } = {},
 ): Promise<number> {
   const config = await loadConfig()
   if (!config.agents.length) {
@@ -407,14 +419,23 @@ export async function runUp(
     }
 
     const brief = reach.get(agent.name)
-    const pid = spawnAgent(agent, bunDir, brief && briefingFor(agent, config, brief))
+    // Mints agent.sessionId when absent; saveConfig below persists it.
+    const resuming = !options.newSession && agent.sessionId
+    const sessionArgs = await sessionArgsFor(agent, options.newSession)
+    const pid = spawnAgent(
+      agent,
+      bunDir,
+      brief && briefingFor(agent, config, brief),
+      sessionArgs,
+    )
     if (!pid) {
       console.error(`  ✗ ${agent.name}: failed to spawn`)
       continue
     }
     agent.pid = pid
     pending.push(agent)
-    console.log(`  · ${agent.name} starting (pid ${pid})`)
+    const how = sessionArgs[0] === '--resume' ? 'resuming' : resuming ? 'restarting' : 'new session'
+    console.log(`  · ${agent.name} starting (pid ${pid}, ${how})`)
   }
 
   await saveConfig(config)
@@ -502,6 +523,7 @@ export async function runStatus(options: { noAutoChannels?: boolean } = {}): Pro
     return {
       name: agent.name,
       channel: `#${agent.name}`,
+      session: agent.sessionId ? agent.sessionId.slice(0, 8) : '—',
       state: !running
         ? 'stopped'
         : gateway
@@ -512,18 +534,21 @@ export async function runStatus(options: { noAutoChannels?: boolean } = {}): Pro
   })
 
   // Size each column to its widest value so nothing runs together.
-  const w = (key: 'name' | 'channel' | 'state', header: string) =>
+  const w = (key: 'name' | 'channel' | 'state' | 'session', header: string) =>
     Math.max(header.length, ...rows.map(r => r[key].length)) + 2
 
   const wName = w('name', 'AGENT')
   const wChan = w('channel', 'CHANNEL')
   const wState = w('state', 'STATE')
+  const wSess = w('session', 'SESSION')
 
   console.log(
-    `  ${'AGENT'.padEnd(wName)}${'CHANNEL'.padEnd(wChan)}${'STATE'.padEnd(wState)}PATH`,
+    `  ${'AGENT'.padEnd(wName)}${'CHANNEL'.padEnd(wChan)}${'STATE'.padEnd(wState)}${'SESSION'.padEnd(wSess)}PATH`,
   )
   for (const r of rows) {
-    console.log(`  ${r.name.padEnd(wName)}${r.channel.padEnd(wChan)}${r.state.padEnd(wState)}${r.path}`)
+    console.log(
+      `  ${r.name.padEnd(wName)}${r.channel.padEnd(wChan)}${r.state.padEnd(wState)}${r.session.padEnd(wSess)}${r.path}`,
+    )
   }
   console.log()
   return 0

@@ -176,6 +176,36 @@ read, edit, and execute everything in it.
 > several. Upstream has the same class of bug on Telegram
 > ([#4647](https://github.com/anthropics/claude-plugins-official/issues/4647)).
 
+## Sessions
+
+An agent is the durable thing — a bot, a channel, a directory. A Claude Code
+session is a conversation it drives, and the two are a pointer, not the same
+object.
+
+```sh
+aquila sessions            # conversations per agent, ● marks the bound one
+aquila bind backend 368592fb   # point the bot at a different conversation
+aquila bind backend --new      # start a fresh one
+aquila up --new                # fresh conversation for this start only
+```
+
+Aquila mints the session id rather than discovering it: `claude --session-id
+<uuid>` accepts an id we generate and writes the transcript to `<uuid>.jsonl`,
+and `--resume <uuid>` reuses that id instead of forking. So the mapping is a
+pointer Aquila owns, and repointing is an edit to config.
+
+The practical effect is that **restarts keep their conversation**. Before this,
+`down` then `up` abandoned the transcript and the bot forgot everything.
+
+Resume replays the whole transcript into context, so a long-lived agent's
+session grows until it compacts; `aquila sessions` shows size and turn count so
+that's visible, and `--new` is the reset. The session is fixed at spawn, so
+`bind` takes effect on the next start.
+
+To adopt a conversation you had in a terminal, find it with `aquila sessions`
+and `bind` the agent to it — the session is replaced by a bot-backed one, the
+history isn't.
+
 ## Editing an agent
 
 ```sh
@@ -333,6 +363,7 @@ src/
   sync.ts                channel discovery — probe access, maintain access.json
   allow.ts               who may trigger an agent in a shared channel
   brief.ts               the roster each agent is told about at startup
+  sessions.ts            which conversation each agent drives — list and bind
   config.ts              ~/.aquila state, per-agent state dirs, settings seeding
   discord/
     rest.ts              minimal REST client with 429 handling

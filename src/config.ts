@@ -26,6 +26,11 @@ export interface Agent {
   stateDir: string
   /** Process group leader from the last `aquila up`, if any. */
   pid?: number
+  /**
+   * The Claude Code conversation this agent drives, minted by Aquila on first
+   * start and resumed on every restart. Repoint with `aquila bind`.
+   */
+  sessionId?: string
   /** Extra flags for the claude invocation, e.g. --model. */
   claudeArgs?: string[]
 }
