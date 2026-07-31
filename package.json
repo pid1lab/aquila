@@ -1,35 +1,52 @@
 {
   "name": "@pid1lab/aquila",
   "version": "0.1.0",
-  "description": "Discord channels for your Claude Code agents",
+  "description": "Give every Claude Code agent its own Discord bot, channel, and working directory.",
   "license": "Apache-2.0",
   "type": "module",
+  "homepage": "https://aquila.vgent.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pid1lab/aquila.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pid1lab/aquila/issues"
+  },
   "bin": {
     "aquila": "./src/cli.ts"
   },
   "files": [
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "keywords": [
     "claude-code",
     "discord",
     "agents",
-    "mcp"
+    "mcp",
+    "bot"
   ],
   "scripts": {
     "aquila": "bun src/cli.ts",
     "spike": "bun spike/provision.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.6.0"
   },
+  "dependencies": {
+    "discord-api-types": "^0.38.52"
+  },
   "engines": {
     "bun": ">=1.1.0"
   },
-  "dependencies": {
-    "discord-api-types": "^0.38.52"
+  "os": [
+    "linux"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

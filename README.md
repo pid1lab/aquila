@@ -7,9 +7,27 @@ session in its own working directory. Aquila provisions the bots, scopes the
 channels, wires up access control, and runs the sessions.
 
 ```sh
-aquila init ~/src/api ~/src/web
+aquila init backend=~/src/api frontend=~/src/web
 aquila up
 ```
+
+## Install
+
+```sh
+npm install -g @pid1lab/aquila     # or: bunx @pid1lab/aquila
+```
+
+**Requirements**
+
+- **[Bun](https://bun.sh)** — `curl -fsSL https://bun.sh/install | bash`. Not just
+  for Aquila: the Discord channel plugin's own MCP server runs on Bun, so you
+  need it either way.
+- **Claude Code** — Aquila drives the `claude` CLI and installs the official
+  `discord` channel plugin for you.
+- **Linux.** `aquila up` uses `script(1)` with GNU flag syntax and reads
+  `/proc` to verify agents are alive; neither holds on macOS. `package.json`
+  declares `"os": ["linux"]` so npm refuses to install elsewhere rather than
+  failing confusingly at runtime. macOS support is wanted — see the issues.
 
 ---
 
@@ -214,9 +232,9 @@ hold. If the bot isn't in a server yet it prints an install URL and waits.
 
 Use a throwaway application: the spike renames the bot and creates a channel.
 
-Known gaps: the plugin is installed at user scope, so every Claude
-Code session on the machine spawns an idle Discord MCP server; `script -qfec` is
-Linux-specific, so macOS needs work.
+Known gaps: the plugin is installed at user scope, so every Claude Code session
+on the machine spawns an idle Discord MCP server; macOS is unsupported (see
+Requirements).
 
 ## Layout
 
