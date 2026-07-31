@@ -43,6 +43,11 @@ you install. Budget ~40s per agent in the
 [portal](https://discord.com/developers/applications): **New Application** → name
 it → **Bot** → **Reset Token** → copy.
 
+Do this **one application at a time**, pasting each token into Aquila before
+creating the next. A bot token is displayed once and can only be recovered by
+resetting it, so creating several up front means losing all but the last to the
+clipboard. Aquila prompts for them one by one for exactly this reason.
+
 **It can't create the server.** Discord restricted `POST /guilds` for
 applications on 2025-07-15 — bots now get `Bots cannot use this endpoint`, and
 guilds that bots did own were transferred to real users. So you create the server

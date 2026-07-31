@@ -117,13 +117,23 @@ export function promptLine(label: string, fallback?: string): Promise<string> {
  * and there's no coupling between paste order and argument order. The
  * application's own name is shown back as confirmation, but carries no meaning:
  * the agent's display name in Discord comes from a guild nickname we set later.
+ *
+ * One application at a time, deliberately. A bot token is shown once and can
+ * only be recovered by resetting it, so telling someone to create N
+ * applications up front means N-1 tokens lost to the clipboard. We ask for one,
+ * wait for it, then send them back for the next.
  */
 export async function collectViaTerminal(agents: string[]): Promise<CollectedToken[]> {
-  console.log(`\n  Create ${agents.length} application(s) at\n  ${PORTAL_URL}`)
-  console.log(`  (New Application → name it anything → Bot → Reset Token → copy)\n`)
+  const plural = agents.length === 1 ? 'application' : 'applications'
+  console.log(`\n  You'll create ${agents.length} Discord ${plural}, one at a time.`)
+  console.log(`  Paste each token as you go — a token is shown once, and only`)
+  console.log(`  one fits on the clipboard.\n`)
+  console.log(`  ${PORTAL_URL}`)
+  console.log(`  New Application → name it anything → Bot → Reset Token → copy\n`)
 
   const collected: CollectedToken[] = []
-  for (const agent of agents) {
+  for (const [i, agent] of agents.entries()) {
+    if (i > 0) console.log(`\n  Now create the next application (${i + 1} of ${agents.length}).`)
     for (;;) {
       const token = await promptHidden(`  ${agent.padEnd(12)} token › `)
       if (!token) {
@@ -190,9 +200,11 @@ function page(agents: string[]): string {
 <main>
   <h1>Aquila setup</h1>
   <p>Create one application per agent at
-     <a href="${PORTAL_URL}" target="_blank" rel="noreferrer">the Developer Portal</a>,
-     then paste each bot token below. The application can be named anything —
-     each agent's display name is set as a server nickname.</p>
+     <a href="${PORTAL_URL}" target="_blank" rel="noreferrer">the Developer Portal</a>
+     — <strong>make one, paste its token here, then make the next.</strong> A
+     token is shown once and only one fits on the clipboard, so don't create
+     them all up front. Applications can be named anything; each agent's display
+     name is set as a server nickname.</p>
   <form id="f">${rows}</form>
   <button id="go" disabled>Provision ${agents.length} agent${agents.length === 1 ? '' : 's'}</button>
   <footer>Tokens go straight to this local process and are written to
