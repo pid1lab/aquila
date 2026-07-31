@@ -77,34 +77,28 @@ Claude Code session regardless.
 ## Setup
 
 ```sh
-aquila init ~/src/api ~/src/web     # two agents, in those directories
-aquila init                         # prompts for a directory per agent
-aquila init ~/src/api --web         # paste tokens in a browser form
-aquila add ~/src/docs               # one more, later
+aquila init backend frontend                       # two agents, in the cwd
+aquila init backend=~/src/api frontend=~/src/web   # explicit directories
+aquila init backend frontend --web                 # paste tokens in a browser
+aquila add reviewer ~/src/docs                     # one more, later
 ```
 
-**Agents are named after their Discord application.** You already name each app
-in the portal, so that name becomes the agent's name, its channel name, and the
-bot's display name — all agreeing by construction, with no rename. `"Orders API"`
-becomes agent `orders-api` and channel `#orders-api`. Duplicates get a numeric
-suffix.
-
-Aquila also gives each bot a **server nickname** matching its agent name, so it
-displays correctly in your member list even if the application was named
-something else. A nickname is scoped to the one server, takes display precedence
-over the username, leaves your application's global identity alone, and is
-limited at 20 per 5 minutes rather than the ~2/hour that applies to renames.
+**You name each agent; the application can be called anything.** Aquila sets a
+**server nickname** so each bot displays as its agent name — matching its
+channel — regardless of what you typed in the portal. A nickname is scoped to
+your one server, takes display precedence over the username, leaves your
+application's global identity alone, and is limited at 20 per 5 minutes.
 
 `--rename` additionally changes the bot's *global* username via
-`PATCH /users/@me`. That applies in every server the bot has joined and is the
-rate-limited one, so it's off by default and rarely what you want.
+`PATCH /users/@me`. That applies in every server the bot has joined and is
+rate-limited to roughly 2/hour, so it's off by default and rarely what you want.
 
 Tokens are collected in one uninterrupted stretch — terminal prompts by default,
 so SSH and headless boxes work; `--web` serves a form on localhost for when you
 already have the portal open in a browser. Either way each token is validated
 against Discord as it lands, so a half-copied paste is caught immediately rather
-than three steps later. `--web` needs a directory per agent so the form knows how
-many fields to render.
+than three steps later. Both prompt per agent name, so you always know which
+agent you're pasting for.
 
 | Flag | Effect |
 | --- | --- |

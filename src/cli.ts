@@ -10,8 +10,8 @@ import { runMove, runSet } from './manage.ts'
 const USAGE = `
 aquila — Discord channels for your Claude Code agents
 
-  aquila init [path...]        provision bots and channels for each agent
-  aquila add [path]            add one agent to the server you already have
+  aquila init <agent...>       provision bots and channels for each agent
+  aquila add <agent> [path]    add one agent to the server you already have
   aquila up [agent...]         start agents (returns immediately)
                                --trust  accept Claude Code's folder-trust
                                         prompt for each agent's directory
@@ -20,19 +20,20 @@ aquila — Discord channels for your Claude Code agents
   aquila move <agent> <path>   move an agent to a new working directory
   aquila set <agent> k=v       change a setting (claudeArgs)
 
-Agents are named after their Discord application, so name each app in the
-portal what you want the agent called. Arguments are working directories:
+You name each agent; the application can be called anything. Aquila sets a
+server nickname so the bot displays as its agent name.
 
-  aquila init ~/src/api ~/src/web     two agents, in those directories
-  aquila init                         prompts for a directory per agent
+  aquila init backend frontend
+  aquila init backend=~/src/api frontend=~/src/web
 
 up/down with no names act on every agent.
 
 Options for init and add:
   --web            paste tokens in a browser form instead of the terminal
   --port <n>       port for --web (default 7777)
-  --rename         rename each bot to its agent name (Discord limits this
-                   to ~2/hour per bot; off by default)
+  --rename         also change the bot's *global* username (every server it
+                   is in; Discord limits this to ~2/hour, off by default —
+                   the server nickname is set automatically regardless)
   --adopt          take over an existing channel that already has the
                    agent's name, rewriting its permissions
   --no-plugin      skip installing the discord channel plugin (init only)
@@ -75,6 +76,10 @@ switch (command) {
     break
 
   case 'init': {
+    if (!positional.length) {
+      console.error('usage: aquila init <agent...>  (e.g. `aquila init backend frontend`)')
+      process.exit(1)
+    }
     const port = flagValue(rest, '--port')
     process.exit(
       await runInit(positional, {
@@ -89,6 +94,10 @@ switch (command) {
   }
 
   case 'add': {
+    if (!positional.length) {
+      console.error('usage: aquila add <agent> [path]   (e.g. `aquila add reviewer ~/src/api`)')
+      process.exit(1)
+    }
     const port = flagValue(rest, '--port')
     process.exit(
       await runAdd(positional, {
