@@ -111,6 +111,23 @@ export function promptLine(label: string, fallback?: string): Promise<string> {
 }
 
 /**
+ * Reject a token whose application is already spoken for.
+ *
+ * Two agents sharing one bot is not a cosmetic mistake: both sessions open a
+ * gateway with the same token, so every message is delivered twice and answered
+ * twice. It's the same failure that ruled out `claude --bg`, and pasting the
+ * same token twice is an easy way to reach it by hand.
+ *
+ * `taken` maps application id → the agent already using it.
+ */
+function duplicateOf(
+  result: CollectedToken,
+  taken: Map<string, string>,
+): string | undefined {
+  return taken.get(result.applicationId)
+}
+
+/**
  * Collect one bot token per agent.
  *
  * Prompting by agent name means you always know which agent you're pasting for,
@@ -123,7 +140,10 @@ export function promptLine(label: string, fallback?: string): Promise<string> {
  * applications up front means N-1 tokens lost to the clipboard. We ask for one,
  * wait for it, then send them back for the next.
  */
-export async function collectViaTerminal(agents: string[]): Promise<CollectedToken[]> {
+export async function collectViaTerminal(
+  agents: string[],
+  taken: Map<string, string> = new Map(),
+): Promise<CollectedToken[]> {
   const plural = agents.length === 1 ? 'application' : 'applications'
   console.log(`\n  You'll create ${agents.length} Discord ${plural}, one at a time.`)
   console.log(`  Paste each token as you go — a token is shown once, and only`)
@@ -142,6 +162,15 @@ export async function collectViaTerminal(agents: string[]): Promise<CollectedTok
       }
       try {
         const result = await identify(agent, token)
+        const clash = duplicateOf(result, taken)
+        if (clash) {
+          console.log(
+            `  ${''.padEnd(12)} ✗ that's the same application as "${clash}" —\n` +
+              `  ${''.padEnd(12)}   each agent needs its own, or both bots answer every message`,
+          )
+          continue
+        }
+        taken.set(result.applicationId, agent)
         console.log(`  ${''.padEnd(12)} ✓ app "${result.appName}"`)
         collected.push(result)
         break
@@ -266,7 +295,11 @@ function page(agents: string[]): string {
 </script>`
 }
 
-export function collectViaWeb(agents: string[], port = 7777): Promise<CollectedToken[]> {
+export function collectViaWeb(
+  agents: string[],
+  port = 7777,
+  taken: Map<string, string> = new Map(),
+): Promise<CollectedToken[]> {
   return new Promise((resolve, reject) => {
     const validated = new Map<string, CollectedToken>()
 
@@ -307,6 +340,17 @@ export function collectViaWeb(agents: string[], port = 7777): Promise<CollectedT
           }
           try {
             const result = await identify(String(slot), token)
+            // Don't let a row claim an application another row (or an existing
+            // agent) already holds — two agents on one bot answer everything twice.
+            const priorSlot = [...validated.entries()].find(
+              ([k, v]) => k !== String(slot) && v.applicationId === result.applicationId,
+            )?.[0]
+            const clash = duplicateOf(result, taken) ?? priorSlot
+            if (clash) {
+              validated.delete(String(slot))
+              json(200, { ok: false, error: `same app as ${clash}` })
+              return
+            }
             validated.set(String(slot), result)
             json(200, { ok: true, appName: result.appName })
           } catch (err) {

@@ -175,8 +175,23 @@ async function prepareBot(t: CollectedToken, rename: boolean): Promise<void> {
   }
 }
 
-function collect(agents: string[], options: InitOptions): Promise<CollectedToken[]> {
-  return options.web ? collectViaWeb(agents, options.port) : collectViaTerminal(agents)
+/**
+ * Applications already claimed by existing agents, so a re-used token is caught
+ * at paste time rather than producing two agents that share one bot — and
+ * therefore answer every message twice.
+ */
+function claimedApps(config: Config): Map<string, string> {
+  return new Map(config.agents.map(a => [a.applicationId, a.name]))
+}
+
+function collect(
+  agents: string[],
+  options: InitOptions,
+  taken: Map<string, string>,
+): Promise<CollectedToken[]> {
+  return options.web
+    ? collectViaWeb(agents, options.port, taken)
+    : collectViaTerminal(agents, taken)
 }
 
 export async function runInit(specs: string[], options: InitOptions = {}): Promise<number> {
@@ -205,7 +220,7 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
   console.log(`\nAquila — provisioning ${parsed.length} agent(s)\n`)
 
   // 1. Tokens. The only manual part, batched into one uninterrupted stretch.
-  const tokens = await collect(names, options)
+  const tokens = await collect(names, options, claimedApps(config))
   if (!tokens.length) {
     console.error('No tokens collected.')
     return 1
@@ -408,7 +423,7 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
 
   console.log(`\nAquila — adding agent "${spec.name}"\n`)
 
-  const collected = await collect([spec.name], options)
+  const collected = await collect([spec.name], options, claimedApps(config))
   const t = collected[0]
   if (!t) {
     console.error('No token collected.')
