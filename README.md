@@ -131,6 +131,18 @@ twice — two sessions on one token would answer every message twice.
 
 Agents outlive the shell but not a reboot; run `aquila up` again after one.
 
+**First run in a new directory** needs Claude Code's workspace trust. There's no
+CLI flag for it, and a detached session blocks forever on a prompt nobody can
+see, so `up` checks first and refuses with instructions. `aquila up --trust`
+records it. That's deliberately explicit: trusting a folder lets Claude Code
+read, edit, and execute everything in it.
+
+> Not `claude --bg`. Its daemon pre-warms spare sessions carrying an earlier
+> invocation's environment, so a second agent silently inherits the first agent's
+> token and both bots answer every message. Fine for one agent, broken for
+> several. Upstream has the same class of bug on Telegram
+> ([#4647](https://github.com/anthropics/claude-plugins-official/issues/4647)).
+
 ## Editing an agent
 
 ```sh
@@ -148,18 +160,6 @@ divergence it finds with `⚠ running in …`.
 `set` handles the rest. Everything it changes is read at spawn, so it warns when
 the agent needs a restart to pick the change up, and it redirects `path` to
 `move` rather than doing half the job.
-
-**First run in a new directory** needs Claude Code's workspace trust. There's no
-CLI flag for it, and a detached session blocks forever on a prompt nobody can
-see, so `up` checks first and refuses with instructions. `aquila up --trust`
-records it. That's deliberately explicit: trusting a folder lets Claude Code
-read, edit, and execute everything in it.
-
-> Not `claude --bg`. Its daemon pre-warms spare sessions carrying an earlier
-> invocation's environment, so a second agent silently inherits the first agent's
-> token and both bots answer every message. Fine for one agent, broken for
-> several. Upstream has the same class of bug on Telegram
-> ([#4647](https://github.com/anthropics/claude-plugins-official/issues/4647)).
 
 ## Permissions
 
