@@ -13,7 +13,7 @@
     "url": "https://github.com/pid1lab/aquila/issues"
   },
   "bin": {
-    "aquila": "./src/cli.ts"
+    "aquila": "src/cli.ts"
   },
   "files": [
     "src",
