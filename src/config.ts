@@ -33,6 +33,11 @@ export interface Agent {
 export interface Config {
   /** The shared server all agents live in. */
   guildId?: string
+  /**
+   * Which agent's bot holds MANAGE_CHANNELS/MANAGE_ROLES and can therefore
+   * create channels for new agents. Normally the first one installed.
+   */
+  provisionerAgent?: string
   /** The human's snowflake, captured on join. Seeds each agent's allowlist. */
   ownerId?: string
   agents: Agent[]
@@ -56,6 +61,16 @@ export async function saveConfig(config: Config): Promise<void> {
 /** Per-agent state dir, so each bot gets its own token and allowlist. */
 export function stateDirFor(agentName: string): string {
   return join(AQUILA_DIR, 'agents', agentName)
+}
+
+/** Read an agent's bot token back out of its state dir. */
+export async function readAgentToken(stateDir: string): Promise<string | undefined> {
+  try {
+    const env = await readFile(join(stateDir, '.env'), 'utf8')
+    return /^DISCORD_BOT_TOKEN=(.+)$/m.exec(env)?.[1]?.trim()
+  } catch {
+    return undefined
+  }
 }
 
 /**

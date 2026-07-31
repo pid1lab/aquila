@@ -3,13 +3,14 @@
  * aquila — Discord channels for your Claude Code agents.
  */
 
-import { runInit } from './init.ts'
+import { runAdd, runInit } from './init.ts'
 import { runDown, runStatus, runUp } from './up.ts'
 
 const USAGE = `
 aquila — Discord channels for your Claude Code agents
 
   aquila init <agent...>       provision bots and channels for each agent
+  aquila add <agent> [path]    add one agent to the server you already have
   aquila up [agent...]         start agents (returns immediately)
                                --trust  accept Claude Code's folder-trust
                                         prompt for each agent's directory
@@ -23,10 +24,10 @@ An agent is a name, optionally with a working directory:
 
 up/down with no names act on every agent.
 
-Options for init:
+Options for init and add:
   --web            paste tokens in a browser form instead of the terminal
   --port <n>       port for --web (default 7777)
-  --no-plugin      skip installing the discord channel plugin
+  --no-plugin      skip installing the discord channel plugin (init only)
 
 Discord requires you to create each bot by hand in the Developer Portal
 (https://discord.com/developers/applications), and to create the server
@@ -73,10 +74,20 @@ switch (command) {
     break
   }
 
-  case 'add':
-    console.error('`aquila add` is not implemented yet.')
-    process.exit(1)
+  case 'add': {
+    if (!positional.length) {
+      console.error('usage: aquila add <agent> [path]   (e.g. `aquila add reviewer ~/src/api`)')
+      process.exit(1)
+    }
+    const port = flagValue(rest, '--port')
+    process.exit(
+      await runAdd(positional, {
+        web: rest.includes('--web'),
+        port: port ? Number(port) : undefined,
+      }),
+    )
     break
+  }
 
   default:
     console.log(USAGE)

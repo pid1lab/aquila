@@ -21,16 +21,19 @@ import {
   listGuilds,
   renameBot,
   waitForGuild,
+  type Channel,
 } from './discord/provision.ts'
 import { AGENT_PERMISSIONS, PROVISIONER_PERMISSIONS } from './discord/constants.ts'
 import {
   loadConfig,
+  readAgentToken,
   saveConfig,
   stateDirFor,
   writeAgentAccess,
   writeAgentSettings,
   writeAgentToken,
   type Agent,
+  type Config,
 } from './config.ts'
 import { collectViaTerminal, collectViaWeb } from './tokens.ts'
 
@@ -172,7 +175,13 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
   // Persist after each agent. A failure partway then leaves consistent state —
   // the agents already provisioned are in config and usable, rather than being
   // orphaned channels and state dirs that nothing knows about.
-  const persist = () => saveConfig({ guildId, ownerId, agents: [...config.agents, ...agents] })
+  const persist = () =>
+    saveConfig({
+      guildId,
+      ownerId,
+      provisionerAgent: config.provisionerAgent,
+      agents: [...config.agents, ...agents],
+    })
 
   for (const [index, t] of tokens.entries()) {
     const spec = parsed[index]
@@ -213,8 +222,136 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
     else step('! could not install the plugin — run `claude plugin install discord@claude-plugins-official`')
   }
 
+  config.provisionerAgent ??= tokens[0]?.agent
   await persist()
   console.log(`\n  ${agents.length} agent(s) ready. Start them with:\n\n    aquila up\n`)
+  return 0
+}
+
+/**
+ * Create a channel using whichever existing bot can.
+ *
+ * Only the first bot installed carries MANAGE_CHANNELS/MANAGE_ROLES, so new
+ * agents can't create their own channel — an established bot has to do it for
+ * them. We remember which one worked; for configs written before that was
+ * tracked, we try each agent in turn and record the winner.
+ */
+async function createChannelVia(
+  config: Config,
+  guildId: string,
+  name: string,
+  botUserId: string,
+): Promise<{ channel: Channel; provisioner: string }> {
+  const ordered = [
+    ...config.agents.filter(a => a.name === config.provisionerAgent),
+    ...config.agents.filter(a => a.name !== config.provisionerAgent),
+  ]
+
+  let lastError: unknown
+  for (const candidate of ordered) {
+    const token = await readAgentToken(candidate.stateDir)
+    if (!token) continue
+    try {
+      const channel = await createAgentChannel(token, guildId, name, botUserId)
+      return { channel, provisioner: candidate.name }
+    } catch (err) {
+      lastError = err
+    }
+  }
+  throw new Error(
+    `No existing bot could create #${name} — none of them hold MANAGE_CHANNELS. ` +
+      `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  )
+}
+
+/** `aquila add <name> [path]` — one more agent in the server you already have. */
+export async function runAdd(specs: string[], options: InitOptions = {}): Promise<number> {
+  const config = await loadConfig()
+
+  if (!config.guildId || !config.ownerId) {
+    console.error('\nNo server configured yet. Run `aquila init <agent...>` first.\n')
+    return 1
+  }
+  if (!config.agents.length) {
+    console.error('\nNo existing agents to create the channel with. Run `aquila init` first.\n')
+    return 1
+  }
+
+  // Accept `add reviewer ~/src/x` as well as `add reviewer=~/src/x`.
+  const joined = specs.length === 2 && !specs[0]!.includes('=') ? `${specs[0]}=${specs[1]}` : specs[0]!
+  const spec = parseAgentSpec(joined, process.cwd())
+
+  if (!spec.name) {
+    console.error(`Invalid agent name in "${specs.join(' ')}"`)
+    return 1
+  }
+  if (config.agents.some(a => a.name === spec.name)) {
+    console.error(`Agent "${spec.name}" already exists.`)
+    return 1
+  }
+
+  console.log(`\nAquila — adding agent "${spec.name}"\n`)
+
+  const collected = options.web
+    ? await collectViaWeb([spec.name], options.port)
+    : await collectViaTerminal([spec.name])
+  const t = collected[0]
+  if (!t) {
+    console.error('No token collected.')
+    return 1
+  }
+
+  console.log()
+  await enableMessageContentIntent(t.token)
+  let renamed = true
+  try {
+    await renameBot(t.token, t.agent)
+  } catch {
+    renamed = false
+  }
+  done(
+    renamed
+      ? `message content intent on, bot renamed`
+      : `message content intent on (rename skipped — rate limited?)`,
+  )
+
+  // One click: the server is already known, so it's pre-selected and locked.
+  const already = await listGuilds(t.token)
+  if (already.some(g => g.id === config.guildId)) {
+    done('already in the server')
+  } else {
+    console.log(`\n  Install ${t.agent}:\n`)
+    console.log(`    ${inviteUrl(t.applicationId, config.guildId, AGENT_PERMISSIONS)}\n`)
+    step('waiting...')
+    await waitForGuild(t.token, { expectId: config.guildId })
+    done('joined')
+  }
+
+  const { channel, provisioner } = await createChannelVia(
+    config,
+    config.guildId,
+    t.agent,
+    t.botUserId,
+  )
+
+  const stateDir = stateDirFor(t.agent)
+  await writeAgentToken(stateDir, t.token)
+  await writeAgentAccess(stateDir, config.ownerId, channel.id)
+  await writeAgentSettings(spec.path)
+
+  config.provisionerAgent = provisioner
+  config.agents.push({
+    name: t.agent,
+    path: spec.path,
+    applicationId: t.applicationId,
+    botUserId: t.botUserId,
+    channelId: channel.id,
+    stateDir,
+  })
+  await saveConfig(config)
+
+  done(`#${channel.name} → ${spec.path}`)
+  console.log(`\n  Start it with:\n\n    aquila up ${t.agent}\n`)
   return 0
 }
 
