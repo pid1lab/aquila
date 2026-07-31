@@ -1,0 +1,45 @@
+# Typecheck on every push and pull request.
+#
+# `prepublishOnly` already runs tsc, but that fires at publish time — the
+# worst moment to discover a type error, since you're mid-release. This
+# catches it on push instead.
+#
+# There is no test suite to run yet. Aquila's behaviour lives almost entirely
+# in calls to Discord and in spawned processes, so the useful checks are the
+# live spike (spike/provision.ts) and manual runs, neither of which belongs in
+# CI: the first needs a real bot token, the second a real Discord server.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun x tsc --noEmit
+
+      # Catches the class of packaging bug that shipped a binary-less 0.1.0:
+      # npm's publish-time validation silently drops an invalid bin entry, and
+      # `npm pack` does not apply the same rules. --dry-run does.
+      - name: Verify the package would publish cleanly
+        run: |
+          output=$(npm publish --dry-run 2>&1)
+          echo "$output"
+          if echo "$output" | grep -q "auto-corrected"; then
+            echo "::error::npm would rewrite package.json on publish — see warnings above"
+            exit 1
+          fi
