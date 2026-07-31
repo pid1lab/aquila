@@ -19,8 +19,10 @@
 
 import { spawn } from 'node:child_process'
 import {
+  applyAgentOverwrites,
   createAgentChannel,
   enableMessageContentIntent,
+  findChannelByName,
   getOwnerId,
   inviteUrl,
   listGuilds,
@@ -28,7 +30,7 @@ import {
   waitForGuild,
   type Channel,
 } from './discord/provision.ts'
-import { AGENT_PERMISSIONS, PROVISIONER_PERMISSIONS } from './discord/constants.ts'
+import { AGENT_PERMISSIONS, PROVISIONER_PERMISSIONS, VIEW_CHANNEL } from './discord/constants.ts'
 import {
   loadConfig,
   readAgentToken,
@@ -54,6 +56,8 @@ export interface InitOptions {
   noPlugin?: boolean
   /** Rename each bot to its agent name. Off by default — Discord rate-limits it. */
   rename?: boolean
+  /** Take over an existing channel that already has the agent's name. */
+  adopt?: boolean
 }
 
 /** An agent we're about to provision: a validated token plus its resolved identity. */
@@ -91,6 +95,48 @@ function uniqueName(appName: string, taken: Set<string>): string {
 
 const step = (msg: string) => console.log(`  ${msg}`)
 const done = (msg: string) => console.log(`  ✓ ${msg}`)
+
+/**
+ * Create an agent's channel, coping with one that already has the name.
+ *
+ * Discord allows duplicate channel names, so creating blindly would leave the
+ * user staring at two identical `#backend` channels with the agent bound to
+ * whichever one we made last — and messages typed in the other silently ignored.
+ *
+ * Three cases:
+ *   - no channel by that name  → create it
+ *   - one that already grants this bot access → adopt it silently; this is a
+ *     re-run of a partly-finished init, and doing nothing is correct
+ *   - one belonging to something else → refuse, unless --adopt says to take it
+ */
+async function ensureAgentChannel(
+  token: string,
+  guildId: string,
+  name: string,
+  botUserId: string,
+  adopt: boolean,
+): Promise<{ channel: Channel; reused: boolean }> {
+  const existing = await findChannelByName(token, guildId, name)
+  if (!existing) {
+    return { channel: await createAgentChannel(token, guildId, name, botUserId), reused: false }
+  }
+
+  const alreadyOurs = existing.permission_overwrites?.some(
+    o => o.id === botUserId && (BigInt(o.allow) & VIEW_CHANNEL) !== 0n,
+  )
+  if (alreadyOurs) return { channel: existing, reused: true }
+
+  if (!adopt) {
+    throw new Error(
+      `#${name} already exists in this server and isn't wired to this bot.\n` +
+        `    Rename the application in the Developer Portal, delete that channel,\n` +
+        `    or re-run with --adopt to take it over (this rewrites its permissions).`,
+    )
+  }
+
+  await applyAgentOverwrites(token, existing.id, guildId, botUserId)
+  return { channel: existing, reused: true }
+}
 
 /** Flip the intent flag, and optionally rename. Shared by init and add. */
 async function prepareBot(t: Planned, rename: boolean): Promise<void> {
@@ -223,7 +269,13 @@ export async function runInit(paths: string[], options: InitOptions = {}): Promi
 
   for (const t of tokens) {
     try {
-      const channel = await createAgentChannel(provisioner.token, guildId, t.agent, t.botUserId)
+      const { channel, reused } = await ensureAgentChannel(
+        provisioner.token,
+        guildId,
+        t.agent,
+        t.botUserId,
+        !!options.adopt,
+      )
       const stateDir = stateDirFor(t.agent)
       await writeAgentToken(stateDir, t.token)
       await writeAgentAccess(stateDir, ownerId, channel.id)
@@ -240,7 +292,7 @@ export async function runInit(paths: string[], options: InitOptions = {}): Promi
         stateDir,
       })
       await persist()
-      done(`#${channel.name} → ${t.path}`)
+      done(`#${channel.name}${reused ? ' (existing)' : ''} → ${t.path}`)
     } catch (err) {
       await persist()
       const msg = err instanceof Error ? err.message : String(err)
@@ -275,6 +327,7 @@ async function createChannelVia(
   guildId: string,
   name: string,
   botUserId: string,
+  adopt: boolean,
 ): Promise<{ channel: Channel; provisioner: string }> {
   const ordered = [
     ...config.agents.filter(a => a.name === config.provisionerAgent),
@@ -286,7 +339,7 @@ async function createChannelVia(
     const token = await readAgentToken(candidate.stateDir)
     if (!token) continue
     try {
-      const channel = await createAgentChannel(token, guildId, name, botUserId)
+      const { channel } = await ensureAgentChannel(token, guildId, name, botUserId, adopt)
       return { channel, provisioner: candidate.name }
     } catch (err) {
       lastError = err
@@ -348,6 +401,7 @@ export async function runAdd(paths: string[], options: InitOptions = {}): Promis
     config.guildId,
     t.agent,
     t.botUserId,
+    !!options.adopt,
   )
 
   const stateDir = stateDirFor(t.agent)

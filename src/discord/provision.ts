@@ -36,10 +36,19 @@ export interface Guild {
   owner_id?: string
 }
 
+export interface PermissionOverwrite {
+  id: string
+  type: number
+  allow: string
+  deny: string
+}
+
 export interface Channel {
   id: string
   name: string
+  type?: number
   guild_id?: string
+  permission_overwrites?: PermissionOverwrite[]
 }
 
 /** Identify the app behind a token. First call for any token — validates it too. */
@@ -172,6 +181,18 @@ export function deleteChannel(token: string, channelId: string): Promise<void> {
  *
  * @everyone's role id is always the guild id.
  */
+function agentOverwrites(guildId: string, agentBotUserId: string, humanUserIds: string[]) {
+  return [
+    { id: guildId, type: OVERWRITE_ROLE, deny: VIEW_CHANNEL.toString() },
+    { id: agentBotUserId, type: OVERWRITE_MEMBER, allow: AGENT_PERMISSIONS.toString() },
+    ...humanUserIds.map(id => ({
+      id,
+      type: OVERWRITE_MEMBER,
+      allow: (VIEW_CHANNEL | AGENT_PERMISSIONS).toString(),
+    })),
+  ]
+}
+
 export function createAgentChannel(
   token: string,
   guildId: string,
@@ -182,16 +203,43 @@ export function createAgentChannel(
   return rest<Channel>(token, 'POST', `/guilds/${guildId}/channels`, {
     name,
     type: CHANNEL_TYPE_TEXT,
-    permission_overwrites: [
-      { id: guildId, type: OVERWRITE_ROLE, deny: VIEW_CHANNEL.toString() },
-      { id: agentBotUserId, type: OVERWRITE_MEMBER, allow: AGENT_PERMISSIONS.toString() },
-      ...humanUserIds.map(id => ({
-        id,
-        type: OVERWRITE_MEMBER,
-        allow: (VIEW_CHANNEL | AGENT_PERMISSIONS).toString(),
-      })),
-    ],
+    permission_overwrites: agentOverwrites(guildId, agentBotUserId, humanUserIds),
   })
+}
+
+/** Re-point an existing channel at an agent, for `--adopt`. */
+export function applyAgentOverwrites(
+  token: string,
+  channelId: string,
+  guildId: string,
+  agentBotUserId: string,
+  humanUserIds: string[] = [],
+): Promise<Channel> {
+  return rest<Channel>(token, 'PATCH', `/channels/${channelId}`, {
+    permission_overwrites: agentOverwrites(guildId, agentBotUserId, humanUserIds),
+  })
+}
+
+/**
+ * All text channels in the guild.
+ *
+ * Note this endpoint is *not* filtered by the bot's view permissions — it
+ * returns metadata for channels the bot cannot read. That's what makes name
+ * collisions detectable even against a private channel we'd never see.
+ */
+export async function listChannels(token: string, guildId: string): Promise<Channel[]> {
+  const all = await rest<Channel[]>(token, 'GET', `/guilds/${guildId}/channels`)
+  return all.filter(c => c.type === CHANNEL_TYPE_TEXT)
+}
+
+/** Discord permits duplicate channel names, so callers must check before creating. */
+export async function findChannelByName(
+  token: string,
+  guildId: string,
+  name: string,
+): Promise<Channel | undefined> {
+  const channels = await listChannels(token, guildId)
+  return channels.find(c => c.name === name)
 }
 
 /** A join link for the human. Never expires, unlimited uses. */

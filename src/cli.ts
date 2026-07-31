@@ -30,6 +30,8 @@ Options for init and add:
   --port <n>       port for --web (default 7777)
   --rename         rename each bot to its agent name (Discord limits this
                    to ~2/hour per bot; off by default)
+  --adopt          take over an existing channel that already has the
+                   agent's name, rewriting its permissions
   --no-plugin      skip installing the discord channel plugin (init only)
 
 Discord requires you to create each bot by hand in the Developer Portal
@@ -69,6 +71,7 @@ switch (command) {
         port: port ? Number(port) : undefined,
         noPlugin: rest.includes('--no-plugin'),
         rename: rest.includes('--rename'),
+        adopt: rest.includes('--adopt'),
       }),
     )
     break
@@ -81,6 +84,7 @@ switch (command) {
         web: rest.includes('--web'),
         port: port ? Number(port) : undefined,
         rename: rest.includes('--rename'),
+        adopt: rest.includes('--adopt'),
       }),
     )
     break
