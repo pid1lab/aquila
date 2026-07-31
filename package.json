@@ -28,5 +28,8 @@
   },
   "engines": {
     "bun": ">=1.1.0"
+  },
+  "dependencies": {
+    "discord-api-types": "^0.38.52"
   }
 }

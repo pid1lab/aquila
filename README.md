@@ -229,7 +229,7 @@ src/
   config.ts              ~/.aquila state, per-agent state dirs, settings seeding
   discord/
     rest.ts              minimal REST client with 429 handling
-    constants.ts         permission and application-flag bitfields
+    constants.ts         permission and flag bitfields, from discord-api-types
     provision.ts         the provisioning chain
 spike/
   provision.ts           runnable validation of the chain

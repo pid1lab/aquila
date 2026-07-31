@@ -8,6 +8,14 @@
  * per agent spent in the portal is irreducible and documented as such.
  */
 
+import type {
+  APIApplication,
+  APIGuild,
+  APIGuildTextChannel,
+  APIUser,
+  ChannelType,
+  RESTAPIPartialCurrentUserGuild,
+} from 'discord-api-types/v10'
 import { rest, imageDataUri } from './rest.ts'
 import {
   AGENT_PERMISSIONS,
@@ -18,38 +26,18 @@ import {
   VIEW_CHANNEL,
 } from './constants.ts'
 
-export interface Application {
-  id: string
-  name: string
-  flags: number
-  bot?: { id: string; username: string }
-}
-
-export interface User {
-  id: string
-  username: string
-}
-
-export interface Guild {
-  id: string
-  name: string
-  owner_id?: string
-}
-
-export interface PermissionOverwrite {
-  id: string
-  type: number
-  allow: string
-  deny: string
-}
-
-export interface Channel {
-  id: string
-  name: string
-  type?: number
-  guild_id?: string
-  permission_overwrites?: PermissionOverwrite[]
-}
+/**
+ * Response shapes come from discord-api-types rather than being hand-written,
+ * so they track the API instead of drifting from it. Aliased to short local
+ * names because these are the only shapes Aquila touches.
+ */
+export type Application = APIApplication
+export type User = APIUser
+/** GET /guilds/{id} — the full object, so `owner_id` is guaranteed present. */
+export type Guild = APIGuild
+/** GET /users/@me/guilds returns partials: id and name, but no owner_id. */
+export type PartialGuild = RESTAPIPartialCurrentUserGuild
+export type Channel = APIGuildTextChannel<ChannelType.GuildText>
 
 /** Identify the app behind a token. First call for any token — validates it too. */
 export function getApplication(token: string): Promise<Application> {
@@ -122,8 +110,8 @@ export function setGuildNickname(token: string, guildId: string, nick: string): 
 }
 
 /** Guilds this bot is in. */
-export function listGuilds(token: string): Promise<Guild[]> {
-  return rest<Guild[]>(token, 'GET', '/users/@me/guilds')
+export function listGuilds(token: string): Promise<PartialGuild[]> {
+  return rest<PartialGuild[]>(token, 'GET', '/users/@me/guilds')
 }
 
 /** Full guild object. `owner_id` is the human who created the server. */
@@ -150,7 +138,7 @@ export async function waitForGuild(
     timeoutMs = 300_000,
     intervalMs = 3_000,
   }: { expectId?: string; timeoutMs?: number; intervalMs?: number } = {},
-): Promise<Guild> {
+): Promise<PartialGuild> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const guilds = await listGuilds(token)
@@ -179,7 +167,6 @@ export async function waitForGuild(
  */
 export async function getOwnerId(token: string, guildId: string): Promise<string> {
   const guild = await getGuild(token, guildId)
-  if (!guild.owner_id) throw new Error(`Guild ${guildId} returned no owner_id`)
   return guild.owner_id
 }
 
