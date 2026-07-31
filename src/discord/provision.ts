@@ -106,6 +106,21 @@ export async function renameBot(
   return rest<User>(token, 'PATCH', '/users/@me', body)
 }
 
+/**
+ * Set this bot's nickname within one guild.
+ *
+ * Strictly better than renaming for our purposes. `PATCH /users/@me` changes the
+ * bot's *global* username — it applies in every server the bot has joined, and
+ * Discord rate-limits it to roughly 2/hour. A nickname is scoped to this guild,
+ * takes display precedence over the username, leaves the owner's application
+ * identity alone, and is limited at 20 per 5 minutes.
+ *
+ * Only possible after the bot has joined the guild.
+ */
+export function setGuildNickname(token: string, guildId: string, nick: string): Promise<unknown> {
+  return rest(token, 'PATCH', `/guilds/${guildId}/members/@me`, { nick })
+}
+
 /** Guilds this bot is in. */
 export function listGuilds(token: string): Promise<Guild[]> {
   return rest<Guild[]>(token, 'GET', '/users/@me/guilds')

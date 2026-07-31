@@ -89,9 +89,15 @@ bot's display name — all agreeing by construction, with no rename. `"Orders AP
 becomes agent `orders-api` and channel `#orders-api`. Duplicates get a numeric
 suffix.
 
-Renaming bots to match is available as `--rename`, but Discord rate-limits
-username changes to roughly 2/hour per bot, which is exactly why it isn't the
-default.
+Aquila also gives each bot a **server nickname** matching its agent name, so it
+displays correctly in your member list even if the application was named
+something else. A nickname is scoped to the one server, takes display precedence
+over the username, leaves your application's global identity alone, and is
+limited at 20 per 5 minutes rather than the ~2/hour that applies to renames.
+
+`--rename` additionally changes the bot's *global* username via
+`PATCH /users/@me`. That applies in every server the bot has joined and is the
+rate-limited one, so it's off by default and rarely what you want.
 
 Tokens are collected in one uninterrupted stretch — terminal prompts by default,
 so SSH and headless boxes work; `--web` serves a form on localhost for when you

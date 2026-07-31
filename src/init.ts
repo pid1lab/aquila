@@ -27,6 +27,7 @@ import {
   inviteUrl,
   listGuilds,
   renameBot,
+  setGuildNickname,
   waitForGuild,
   type Channel,
 } from './discord/provision.ts'
@@ -136,6 +137,22 @@ async function ensureAgentChannel(
 
   await applyAgentOverwrites(token, existing.id, guildId, botUserId)
   return { channel: existing, reused: true }
+}
+
+/**
+ * Make the bot display as its agent name in this server.
+ *
+ * A nickname rather than a rename: scoped to the guild, generous rate limit,
+ * and it leaves the user's application identity alone. Cosmetic, so a failure
+ * is reported and never fatal.
+ */
+async function nameInGuild(token: string, guildId: string, agent: string): Promise<void> {
+  try {
+    await setGuildNickname(token, guildId, agent)
+    done(`${agent}: shows as "${agent}" in the server`)
+  } catch {
+    step(`! ${agent}: could not set nickname (needs CHANGE_NICKNAME)`)
+  }
 }
 
 /** Flip the intent flag, and optionally rename. Shared by init and add. */
@@ -251,7 +268,10 @@ export async function runInit(paths: string[], options: InitOptions = {}): Promi
     done(`${t.agent}: joined`)
   }
 
-  // 6. Channels, each visible only to its own agent. Enforced by Discord, not
+  // 6. Display names. Only possible once each bot is in the guild.
+  for (const t of tokens) await nameInGuild(t.token, guildId, t.agent)
+
+  // 7. Channels, each visible only to its own agent. Enforced by Discord, not
   //    by our routing — the reason this design uses one bot per agent.
   console.log()
   const agents: Agent[] = []
@@ -302,7 +322,7 @@ export async function runInit(paths: string[], options: InitOptions = {}): Promi
     }
   }
 
-  // 7. The channel plugin each session loads. Non-interactive, so we do it.
+  // 8. The channel plugin each session loads. Non-interactive, so we do it.
   if (!options.noPlugin) {
     const ok = await installPlugin()
     if (ok) done('discord channel plugin installed')
@@ -395,6 +415,8 @@ export async function runAdd(paths: string[], options: InitOptions = {}): Promis
     await waitForGuild(t.token, { expectId: config.guildId })
     done('joined')
   }
+
+  await nameInGuild(t.token, config.guildId, t.agent)
 
   const { channel, provisioner } = await createChannelVia(
     config,
