@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+**Agents are told who the other agents are.** `up` now appends a short briefing
+to each session's system prompt — the agent's own name and private channel, the
+shared channels it's in, and the other agents with their working directories.
+`aquila up --no-brief` skips it.
+
+Previously an agent in a shared channel had no idea it wasn't alone, and you had
+to explain the setup by hand every time. The plugin's own instructions are
+thorough about Discord mechanics but describe a world with exactly one agent in
+it.
+
+Mostly, though, this is about a constraint that bites the moment an agent *does*
+learn siblings exist: it will try to delegate by @mentioning one, and the plugin
+drops bot-authored messages, so nothing is delivered and nothing errors. The
+agent is then free to report a handoff that never happened. The briefing says
+outright that it cannot pass work to another agent and should not claim to.
+
+Session-scoped rather than channel-scoped — there is no hook to inject text on
+joining a channel — so shared channels are named up front. The roster is rebuilt
+on every `up`, so an agent already running when you `aquila add` another won't
+know about the newcomer until it restarts.
+
 **Other people can trigger agents, if you say so.** Shared channels allowed only
 you, and dropped everyone else before the mention check — silently, so a
 colleague @-mentioning an agent saw nothing at all.

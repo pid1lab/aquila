@@ -287,6 +287,21 @@ channel history, including other bots' replies. They can't be *woken* by each
 other — the plugin drops inbound bot messages — so collaboration works with you as
 the scheduler: ask one agent something, then ask another to build on it.
 
+Each agent is told this at startup. `up` appends a short briefing to the system
+prompt naming the agent, its private channel, the shared channels it's in, and
+the other agents with their working directories. `--no-brief` skips it.
+
+The briefing exists mainly for the constraint. The plugin's own instructions
+describe a world with one agent in it, so an agent that learns siblings exist
+will try to delegate by @mentioning one — which is dropped, with no error,
+leaving it free to report a handoff that never happened. It's told plainly that
+it cannot hand work over and shouldn't claim to.
+
+It's session-scoped rather than channel-scoped: there's no hook to inject text
+when a channel is joined, so the shared channels are named up front. The roster
+is rebuilt on every `up`, so it refreshes on restart — an agent already running
+when you `aquila add` another won't know about the newcomer until you restart it.
+
 ## Status
 
 `init`, `add`, `up`, `down`, `status`, `sync`, and `allow` all work and are
@@ -317,6 +332,7 @@ src/
   up.ts                  agent lifecycle: detached pty sessions, up/down/status
   sync.ts                channel discovery — probe access, maintain access.json
   allow.ts               who may trigger an agent in a shared channel
+  brief.ts               the roster each agent is told about at startup
   config.ts              ~/.aquila state, per-agent state dirs, settings seeding
   discord/
     rest.ts              minimal REST client with 429 handling

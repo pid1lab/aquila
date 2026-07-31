@@ -31,8 +31,9 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, saveConfig, type Agent, type Config } from './config.ts'
-import { autoSync } from './sync.ts'
+import { autoSync, reachOf } from './sync.ts'
 import { triggerSummary } from './allow.ts'
+import { briefingFor, type Reach } from './brief.ts'
 
 const CHANNEL_PLUGIN = 'plugin:discord@claude-plugins-official'
 const CLAUDE_CONFIG = join(homedir(), '.claude.json')
@@ -249,8 +250,16 @@ function agentEnv(agent: Agent, bunDir: string): NodeJS.ProcessEnv {
   return env
 }
 
-function spawnAgent(agent: Agent, bunDir: string): number | undefined {
-  const inner = shellQuote(['claude', '--channels', CHANNEL_PLUGIN, ...(agent.claudeArgs ?? [])])
+function spawnAgent(agent: Agent, bunDir: string, briefing?: string): number | undefined {
+  // Before claudeArgs, so an explicit --append-system-prompt of the user's own
+  // lands after ours rather than being buried by it.
+  const inner = shellQuote([
+    'claude',
+    '--channels',
+    CHANNEL_PLUGIN,
+    ...(briefing ? ['--append-system-prompt', briefing] : []),
+    ...(agent.claudeArgs ?? []),
+  ])
   const log = openSync(logPathFor(agent), 'a', 0o600)
 
   const child = spawn('script', ['-qfec', inner, '/dev/null'], {
@@ -327,7 +336,7 @@ function resolveTargets(config: Config, names: string[]): Agent[] | string {
 
 export async function runUp(
   names: string[],
-  options: { trust?: boolean; noAutoChannels?: boolean } = {},
+  options: { trust?: boolean; noAutoChannels?: boolean; noBrief?: boolean } = {},
 ): Promise<number> {
   const config = await loadConfig()
   if (!config.agents.length) {
@@ -384,6 +393,10 @@ export async function runUp(
   // added since last time rather than ignoring it until the next command.
   if (!options.noAutoChannels) await autoSync(config, targets)
 
+  // Who the agent is and who else is here. Best-effort: a failed lookup costs
+  // the roster, not the session.
+  const reach: Map<string, Reach> = options.noBrief ? new Map() : await reachOf(config, targets)
+
   const pending: Agent[] = []
 
   for (const agent of targets) {
@@ -393,7 +406,8 @@ export async function runUp(
       continue
     }
 
-    const pid = spawnAgent(agent, bunDir)
+    const brief = reach.get(agent.name)
+    const pid = spawnAgent(agent, bunDir, brief && briefingFor(agent, config, brief))
     if (!pid) {
       console.error(`  ✗ ${agent.name}: failed to spawn`)
       continue

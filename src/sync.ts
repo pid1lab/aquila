@@ -27,9 +27,10 @@
 
 import { join } from 'node:path'
 import { readFile, writeFile } from 'node:fs/promises'
-import { loadConfig, readAgentToken, saveConfig, type Agent, type Config } from './config.ts'
+import { anyToken, loadConfig, readAgentToken, saveConfig, type Agent, type Config } from './config.ts'
 import { listChannels, type Channel } from './discord/provision.ts'
 import { DiscordError, rest } from './discord/rest.ts'
+import type { Reach } from './brief.ts'
 
 /** Only the parts of access.json we touch; everything else is preserved verbatim. */
 interface GroupPolicy {
@@ -235,6 +236,47 @@ export async function syncChannels(config: Config, targets: Agent[]): Promise<Ag
     results.push(await syncAgent(agent, config, channels))
   }
   return results
+}
+
+/**
+ * Where each agent can be reached, by name, for the spawn-time briefing.
+ *
+ * Read from each agent's own access.json rather than from the guild listing:
+ * that is the file the plugin gates on, so it is the only honest answer to
+ * "which channels will actually reach you". One listing call, shared by all.
+ */
+export async function reachOf(
+  config: Config,
+  agents: Agent[],
+): Promise<Map<string, Reach>> {
+  const out = new Map<string, Reach>()
+  if (!config.guildId) return out
+
+  const token = await anyToken(config)
+  if (!token) return out
+
+  let names: Map<string, string>
+  try {
+    names = new Map((await listChannels(token, config.guildId)).map(c => [c.id, c.name]))
+  } catch {
+    return out
+  }
+
+  const owned = new Set(config.agents.map(a => a.channelId).filter(Boolean) as string[])
+  for (const agent of agents) {
+    const groups = (await readAccess(agent.stateDir)).groups ?? {}
+    const shared: string[] = []
+    for (const id of Object.keys(groups)) {
+      if (owned.has(id)) continue
+      const name = names.get(id)
+      if (name) shared.push(name)
+    }
+    out.set(agent.name, {
+      own: agent.channelId ? names.get(agent.channelId) : undefined,
+      shared: shared.sort(),
+    })
+  }
+  return out
 }
 
 /** Did anything actually move? */

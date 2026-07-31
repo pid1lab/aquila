@@ -77,6 +77,23 @@ export function stateDirFor(agentName: string): string {
   return join(AQUILA_DIR, 'agents', agentName)
 }
 
+/**
+ * Any usable bot token, for calls that aren't about a particular agent —
+ * listing channels, looking up members. The provisioner first, since it is the
+ * one guaranteed to still be in the server.
+ */
+export async function anyToken(config: Config): Promise<string | undefined> {
+  const order = [
+    ...config.agents.filter(a => a.name === config.provisionerAgent),
+    ...config.agents.filter(a => a.name !== config.provisionerAgent),
+  ]
+  for (const agent of order) {
+    const token = await readAgentToken(agent.stateDir)
+    if (token) return token
+  }
+  return undefined
+}
+
 /** Read an agent's bot token back out of its state dir. */
 export async function readAgentToken(stateDir: string): Promise<string | undefined> {
   try {

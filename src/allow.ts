@@ -11,7 +11,7 @@
  * snowflake stays an implementation detail of access.json.
  */
 
-import { loadConfig, readAgentToken, saveConfig, type Agent, type Config } from './config.ts'
+import { anyToken, loadConfig, saveConfig, type Config } from './config.ts'
 import { fetchUser, label, resolvePerson, type Person } from './discord/people.ts'
 import { changedCount, reportSync, syncChannels, triggerAllowFrom } from './sync.ts'
 
@@ -19,19 +19,6 @@ export interface AllowOptions {
   remove?: boolean
   anyone?: boolean
   ownerOnly?: boolean
-}
-
-/** Any agent's token can read the member list; prefer one that certainly still exists. */
-async function anyToken(config: Config): Promise<string | undefined> {
-  const order: Agent[] = [
-    ...config.agents.filter(a => a.name === config.provisionerAgent),
-    ...config.agents.filter(a => a.name !== config.provisionerAgent),
-  ]
-  for (const agent of order) {
-    const token = await readAgentToken(agent.stateDir)
-    if (token) return token
-  }
-  return undefined
 }
 
 async function describe(token: string, config: Config): Promise<void> {
