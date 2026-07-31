@@ -10,6 +10,11 @@
  * Everything between and after those is automatic. In particular nobody ever
  * copies a snowflake: the guild id comes from the first bot's own guild list,
  * and the user's id comes from that guild's owner_id.
+ *
+ * Agent names come from the applications themselves. The user already names each
+ * app in the portal, so taking that as the source of truth means the bot's
+ * display name, the agent name, and the channel name agree by construction — and
+ * we never call renameBot, which Discord rate-limits to ~2/hour per bot.
  */
 
 import { spawn } from 'node:child_process'
@@ -35,27 +40,30 @@ import {
   type Agent,
   type Config,
 } from './config.ts'
-import { collectViaTerminal, collectViaWeb } from './tokens.ts'
+import {
+  collectViaTerminal,
+  collectViaWeb,
+  promptLine,
+  type CollectedToken,
+} from './tokens.ts'
 
 export interface InitOptions {
   web?: boolean
   port?: number
   /** Skip `claude plugin install`. */
   noPlugin?: boolean
+  /** Rename each bot to its agent name. Off by default — Discord rate-limits it. */
+  rename?: boolean
 }
 
-/** `backend` or `backend=~/src/api` */
-export function parseAgentSpec(spec: string, cwd: string): { name: string; path: string } {
-  const eq = spec.indexOf('=')
-  if (eq === -1) return { name: normaliseName(spec), path: cwd }
-  return {
-    name: normaliseName(spec.slice(0, eq)),
-    path: expandHome(spec.slice(eq + 1)),
-  }
+/** An agent we're about to provision: a validated token plus its resolved identity. */
+interface Planned extends CollectedToken {
+  agent: string
+  path: string
 }
 
 /** Discord lowercases channel names and turns spaces into hyphens; do it up front. */
-function normaliseName(raw: string): string {
+export function normaliseName(raw: string): string {
   return raw
     .trim()
     .toLowerCase()
@@ -63,73 +71,103 @@ function normaliseName(raw: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-function expandHome(p: string): string {
+export function expandHome(p: string): string {
   return p.startsWith('~') ? p.replace(/^~/, process.env.HOME ?? '~') : p
+}
+
+/**
+ * Turn an application name into an agent name, avoiding collisions.
+ *
+ * Two apps can share a name — nothing in Discord prevents it — and two agents
+ * cannot, since the name is also the channel name and the state directory.
+ */
+function uniqueName(appName: string, taken: Set<string>): string {
+  const base = normaliseName(appName) || 'agent'
+  let name = base
+  for (let n = 2; taken.has(name); n++) name = `${base}-${n}`
+  taken.add(name)
+  return name
 }
 
 const step = (msg: string) => console.log(`  ${msg}`)
 const done = (msg: string) => console.log(`  ✓ ${msg}`)
 
-export async function runInit(specs: string[], options: InitOptions = {}): Promise<number> {
-  const cwd = process.cwd()
-  const parsed = specs.map(s => parseAgentSpec(s, cwd))
+/** Flip the intent flag, and optionally rename. Shared by init and add. */
+async function prepareBot(t: Planned, rename: boolean): Promise<void> {
+  // Load-bearing: without this the bot receives messages with empty content.
+  await enableMessageContentIntent(t.token)
 
-  const empty = parsed.find(p => !p.name)
-  if (empty) {
-    console.error(`Invalid agent name in "${specs[parsed.indexOf(empty)]}"`)
-    return 1
+  if (!rename) {
+    done(`${t.agent}: message content intent on`)
+    return
   }
-
-  const names = parsed.map(p => p.name)
-  const duplicate = names.find((n, i) => names.indexOf(n) !== i)
-  if (duplicate) {
-    console.error(`Duplicate agent name: ${duplicate}`)
-    return 1
+  try {
+    await renameBot(t.token, t.agent)
+    done(`${t.agent}: message content intent on, bot renamed`)
+  } catch {
+    done(`${t.agent}: message content intent on (rename skipped — rate limited?)`)
   }
+}
 
+async function collect(
+  count: number | undefined,
+  options: InitOptions,
+): Promise<CollectedToken[] | string> {
+  if (!options.web) return collectViaTerminal(count)
+  if (count === undefined) {
+    return 'With --web, pass a working directory per agent so the form knows how many fields to show.'
+  }
+  return collectViaWeb(count, options.port, t => normaliseName(t.appName))
+}
+
+/** Assign each collected token its agent name and working directory. */
+async function plan(
+  tokens: CollectedToken[],
+  paths: string[],
+  taken: Set<string>,
+  interactive: boolean,
+): Promise<Planned[]> {
+  const planned: Planned[] = []
+  for (const [i, t] of tokens.entries()) {
+    const agent = uniqueName(t.appName, taken)
+    const given = paths[i]
+    const path = given
+      ? expandHome(given)
+      : interactive
+        ? expandHome(await promptLine(`  path for ${agent}`, process.cwd()))
+        : process.cwd()
+    planned.push({ ...t, agent, path })
+  }
+  return planned
+}
+
+export async function runInit(paths: string[], options: InitOptions = {}): Promise<number> {
   const config = await loadConfig()
-  const clash = parsed.find(p => config.agents.some(a => a.name === p.name))
-  if (clash) {
-    console.error(`Agent "${clash.name}" already exists. Use \`aquila add\` for new ones.`)
-    return 1
-  }
 
-  console.log(`\nAquila — provisioning ${parsed.length} agent(s)\n`)
+  console.log(`\nAquila — provisioning agents\n`)
 
   // 1. Tokens. The only manual part, batched into one uninterrupted stretch.
-  const tokens = options.web
-    ? await collectViaWeb(names, options.port)
-    : await collectViaTerminal(names)
-
-  // 2. Per-bot setup that needs no server: intent flag and identity.
-  console.log()
-  for (const t of tokens) {
-    // Load-bearing: without this the bot receives messages with empty content.
-    await enableMessageContentIntent(t.token)
-
-    // Cosmetic, and Discord rate-limits username changes to ~2/hour per bot.
-    // Never fail a run over it — the agent works fine under its portal name.
-    let renamed = true
-    try {
-      await renameBot(t.token, t.agent)
-    } catch {
-      renamed = false
-    }
-    done(
-      renamed
-        ? `${t.agent}: message content intent on, bot renamed`
-        : `${t.agent}: message content intent on (rename skipped — rate limited?)`,
-    )
+  const collected = await collect(paths.length || undefined, options)
+  if (typeof collected === 'string') {
+    console.error(`\n  ✗ ${collected}\n`)
+    return 1
   }
+  if (!collected.length) {
+    console.error('No tokens collected.')
+    return 1
+  }
+
+  // 2. Names from the apps, paths from args or prompts.
+  const taken = new Set(config.agents.map(a => a.name))
+  const tokens = await plan(collected, paths, taken, !options.web && paths.length === 0)
+
+  console.log()
+  for (const t of tokens) await prepareBot(t, !!options.rename)
 
   // 3. The server. The first bot provisions, so it needs MANAGE_CHANNELS and
   //    MANAGE_ROLES; it also installs before we know the guild id, so the user
   //    picks from the dropdown this once.
-  const provisioner = tokens[0]
-  if (!provisioner) {
-    console.error('No tokens collected.')
-    return 1
-  }
+  const provisioner = tokens[0]!
 
   let guildId = config.guildId
   if (!guildId) {
@@ -179,14 +217,11 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
     saveConfig({
       guildId,
       ownerId,
-      provisionerAgent: config.provisionerAgent,
+      provisionerAgent: config.provisionerAgent ?? provisioner.agent,
       agents: [...config.agents, ...agents],
     })
 
-  for (const [index, t] of tokens.entries()) {
-    const spec = parsed[index]
-    if (!spec) continue
-
+  for (const t of tokens) {
     try {
       const channel = await createAgentChannel(provisioner.token, guildId, t.agent, t.botUserId)
       const stateDir = stateDirFor(t.agent)
@@ -194,18 +229,18 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
       await writeAgentAccess(stateDir, ownerId, channel.id)
       // Without this the agent needs permission to use `reply` — i.e. to answer
       // at all — and every message becomes a DM approval.
-      await writeAgentSettings(spec.path)
+      await writeAgentSettings(t.path)
 
       agents.push({
         name: t.agent,
-        path: spec.path,
+        path: t.path,
         applicationId: t.applicationId,
         botUserId: t.botUserId,
         channelId: channel.id,
         stateDir,
       })
       await persist()
-      done(`#${channel.name} → ${spec.path}`)
+      done(`#${channel.name} → ${t.path}`)
     } catch (err) {
       await persist()
       const msg = err instanceof Error ? err.message : String(err)
@@ -222,7 +257,6 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
     else step('! could not install the plugin — run `claude plugin install discord@claude-plugins-official`')
   }
 
-  config.provisionerAgent ??= tokens[0]?.agent
   await persist()
   console.log(`\n  ${agents.length} agent(s) ready. Start them with:\n\n    aquila up\n`)
   return 0
@@ -264,12 +298,12 @@ async function createChannelVia(
   )
 }
 
-/** `aquila add <name> [path]` — one more agent in the server you already have. */
-export async function runAdd(specs: string[], options: InitOptions = {}): Promise<number> {
+/** `aquila add [path]` — one more agent in the server you already have. */
+export async function runAdd(paths: string[], options: InitOptions = {}): Promise<number> {
   const config = await loadConfig()
 
   if (!config.guildId || !config.ownerId) {
-    console.error('\nNo server configured yet. Run `aquila init <agent...>` first.\n')
+    console.error('\nNo server configured yet. Run `aquila init` first.\n')
     return 1
   }
   if (!config.agents.length) {
@@ -277,43 +311,25 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
     return 1
   }
 
-  // Accept `add reviewer ~/src/x` as well as `add reviewer=~/src/x`.
-  const joined = specs.length === 2 && !specs[0]!.includes('=') ? `${specs[0]}=${specs[1]}` : specs[0]!
-  const spec = parseAgentSpec(joined, process.cwd())
+  console.log(`\nAquila — adding an agent\n`)
 
-  if (!spec.name) {
-    console.error(`Invalid agent name in "${specs.join(' ')}"`)
+  const collected = await collect(1, options)
+  if (typeof collected === 'string') {
+    console.error(`\n  ✗ ${collected}\n`)
     return 1
   }
-  if (config.agents.some(a => a.name === spec.name)) {
-    console.error(`Agent "${spec.name}" already exists.`)
-    return 1
-  }
-
-  console.log(`\nAquila — adding agent "${spec.name}"\n`)
-
-  const collected = options.web
-    ? await collectViaWeb([spec.name], options.port)
-    : await collectViaTerminal([spec.name])
-  const t = collected[0]
-  if (!t) {
+  const first = collected[0]
+  if (!first) {
     console.error('No token collected.')
     return 1
   }
 
+  const taken = new Set(config.agents.map(a => a.name))
+  const [t] = await plan([first], paths, taken, !options.web && paths.length === 0)
+  if (!t) return 1
+
   console.log()
-  await enableMessageContentIntent(t.token)
-  let renamed = true
-  try {
-    await renameBot(t.token, t.agent)
-  } catch {
-    renamed = false
-  }
-  done(
-    renamed
-      ? `message content intent on, bot renamed`
-      : `message content intent on (rename skipped — rate limited?)`,
-  )
+  await prepareBot(t, !!options.rename)
 
   // One click: the server is already known, so it's pre-selected and locked.
   const already = await listGuilds(t.token)
@@ -337,12 +353,12 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
   const stateDir = stateDirFor(t.agent)
   await writeAgentToken(stateDir, t.token)
   await writeAgentAccess(stateDir, config.ownerId, channel.id)
-  await writeAgentSettings(spec.path)
+  await writeAgentSettings(t.path)
 
   config.provisionerAgent = provisioner
   config.agents.push({
     name: t.agent,
-    path: spec.path,
+    path: t.path,
     applicationId: t.applicationId,
     botUserId: t.botUserId,
     channelId: channel.id,
@@ -350,7 +366,7 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
   })
   await saveConfig(config)
 
-  done(`#${channel.name} → ${spec.path}`)
+  done(`#${channel.name} → ${t.path}`)
   console.log(`\n  Start it with:\n\n    aquila up ${t.agent}\n`)
   return 0
 }

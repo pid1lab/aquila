@@ -14,9 +14,9 @@ import { createServer } from 'node:http'
 import { getApplication, getBotUser } from './discord/provision.ts'
 
 export interface CollectedToken {
-  agent: string
   token: string
   applicationId: string
+  /** The application's name in the Developer Portal — the agent's name. */
   appName: string
   botUserId: string
 }
@@ -24,10 +24,9 @@ export interface CollectedToken {
 export const PORTAL_URL = 'https://discord.com/developers/applications'
 
 /** Validate a token by identifying the app behind it. Throws if Discord says no. */
-export async function identify(agent: string, token: string): Promise<CollectedToken> {
+export async function identify(token: string): Promise<CollectedToken> {
   const [app, bot] = await Promise.all([getApplication(token), getBotUser(token)])
   return {
-    agent,
     token,
     applicationId: app.id,
     appName: app.name,
@@ -91,26 +90,60 @@ function promptHidden(label: string): Promise<string> {
   })
 }
 
-export async function collectViaTerminal(agents: string[]): Promise<CollectedToken[]> {
-  console.log(`\n  Create ${agents.length} application(s) at\n  ${PORTAL_URL}`)
-  console.log(`  (New Application → name it → Bot → Reset Token → copy)\n`)
+/** Read a visible line, with an optional default shown in brackets. */
+export function promptLine(label: string, fallback?: string): Promise<string> {
+  return new Promise(resolve => {
+    const prompt = fallback ? `${label} [${fallback}] › ` : `${label} › `
+    process.stdout.write(prompt)
+    const onData = (chunk: Buffer) => {
+      process.stdin.off('data', onData)
+      process.stdin.pause()
+      const value = chunk.toString('utf8').trim()
+      resolve(value || fallback || '')
+    }
+    process.stdin.resume()
+    process.stdin.once('data', onData)
+  })
+}
+
+/**
+ * Collect bot tokens.
+ *
+ * Agent names come from the applications themselves, so we don't know them
+ * until each token is validated — which is the point: the user names the app
+ * once in the portal and that name flows through to the agent, the channel, and
+ * the bot's display name, with no rename and therefore no rate limit.
+ *
+ * With `count`, collect exactly that many. Without, keep going until a blank
+ * line ends the list.
+ */
+export async function collectViaTerminal(count?: number): Promise<CollectedToken[]> {
+  console.log(
+    `\n  Create ${count ? `${count} application(s)` : 'an application per agent'} at\n  ${PORTAL_URL}`,
+  )
+  console.log(`  (New Application → name it → Bot → Reset Token → copy)`)
+  console.log(`\n  The application's name becomes the agent's name.\n`)
 
   const collected: CollectedToken[] = []
-  for (const agent of agents) {
+  for (let i = 0; count === undefined || i < count; i++) {
     for (;;) {
-      const token = await promptHidden(`  ${agent.padEnd(12)} token › `)
+      const label = count === undefined ? `  token ${i + 1}` : `  token ${i + 1}/${count}`
+      const suffix = count === undefined && collected.length ? ' (blank to finish)' : ''
+      const token = await promptHidden(`${label}${suffix} › `)
+
       if (!token) {
-        console.log(`  ${''.padEnd(12)} (empty — paste the token, or ^C to abort)`)
+        if (count === undefined && collected.length) return collected
+        console.log(`      (empty — paste the token, or ^C to abort)`)
         continue
       }
       try {
-        const result = await identify(agent, token)
-        console.log(`  ${''.padEnd(12)} ✓ "${result.appName}"`)
+        const result = await identify(token)
+        console.log(`      ✓ "${result.appName}"`)
         collected.push(result)
         break
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        console.log(`  ${''.padEnd(12)} ✗ ${msg} — try again`)
+        console.log(`      ✗ ${msg} — try again`)
       }
     }
   }
@@ -121,17 +154,16 @@ export async function collectViaTerminal(agents: string[]): Promise<CollectedTok
 // Web
 // ---------------------------------------------------------------------------
 
-function page(agents: string[]): string {
-  const rows = agents
-    .map(
-      a => `
-      <label class="row" data-agent="${a}">
-        <span class="name">${a}</span>
+function page(count: number): string {
+  const rows = Array.from(
+    { length: count },
+    (_, i) => `
+      <label class="row" data-slot="${i}">
+        <span class="name">bot ${i + 1}</span>
         <input type="password" autocomplete="off" spellcheck="false" placeholder="paste bot token" />
         <span class="state"></span>
       </label>`,
-    )
-    .join('')
+  ).join('')
 
   return `<!doctype html>
 <meta charset="utf-8">
@@ -166,9 +198,10 @@ function page(agents: string[]): string {
   <h1>Aquila setup</h1>
   <p>Create one application per agent at
      <a href="${PORTAL_URL}" target="_blank" rel="noreferrer">the Developer Portal</a>,
-     then paste each bot token below. Order doesn't matter.</p>
+     then paste each bot token below. <strong>The application's name becomes the
+     agent's name.</strong> Order doesn't matter.</p>
   <form id="f">${rows}</form>
-  <button id="go" disabled>Provision ${agents.length} agent${agents.length === 1 ? '' : 's'}</button>
+  <button id="go" disabled>Provision ${count} agent${count === 1 ? '' : 's'}</button>
   <footer>Tokens go straight to this local process and are written to
           <code>~/.aquila/agents/&lt;name&gt;/.env</code> with mode 0600. Nothing else sees them.</footer>
 </main>
@@ -180,29 +213,38 @@ function page(agents: string[]): string {
   const refresh = () => { go.disabled = valid.size !== rows.length }
 
   for (const row of rows) {
-    const agent = row.dataset.agent
+    const slot = row.dataset.slot
     const input = row.querySelector('input')
     const state = row.querySelector('.state')
+    const name = row.querySelector('.name')
+    const placeholder = name.textContent
     let seq = 0
 
     const check = async () => {
       const token = input.value.trim()
-      valid.delete(agent); refresh()
-      if (!token) { state.className = 'state'; state.textContent = ''; return }
+      valid.delete(slot); refresh()
+      if (!token) {
+        state.className = 'state'; state.textContent = ''
+        name.textContent = placeholder
+        return
+      }
       const mine = ++seq
       state.className = 'state'; state.textContent = 'checking…'
       try {
         const res = await fetch('/validate', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ agent, token }),
+          body: JSON.stringify({ slot, token }),
         })
         const data = await res.json()
         if (mine !== seq) return
         if (data.ok) {
-          state.className = 'state ok'; state.textContent = data.appName
-          valid.set(agent, token)
+          // The app's name is the agent's name — show it as soon as we know it.
+          name.textContent = data.agent
+          state.className = 'state ok'; state.textContent = '✓'
+          valid.set(slot, token)
         } else {
+          name.textContent = placeholder
           state.className = 'state bad'; state.textContent = data.error || 'invalid'
         }
       } catch {
@@ -228,7 +270,11 @@ function page(agents: string[]): string {
 </script>`
 }
 
-export function collectViaWeb(agents: string[], port = 7777): Promise<CollectedToken[]> {
+export function collectViaWeb(
+  count: number,
+  port = 7777,
+  nameFor: (t: CollectedToken) => string = t => t.appName,
+): Promise<CollectedToken[]> {
   return new Promise((resolve, reject) => {
     const validated = new Map<string, CollectedToken>()
 
@@ -240,7 +286,7 @@ export function collectViaWeb(agents: string[], port = 7777): Promise<CollectedT
 
       if (req.method === 'GET' && (req.url === '/' || req.url?.startsWith('/?'))) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        res.end(page(agents))
+        res.end(page(count))
         return
       }
 
@@ -261,26 +307,27 @@ export function collectViaWeb(agents: string[], port = 7777): Promise<CollectedT
         }
 
         if (req.url === '/validate') {
-          const agent = parsed.agent
+          const slot = parsed.slot
           const token = parsed.token
-          if (!agent || !token) {
+          if (slot === undefined || !token) {
             json(400, { ok: false, error: 'missing field' })
             return
           }
           try {
-            const result = await identify(agent, token)
-            validated.set(agent, result)
-            json(200, { ok: true, appName: result.appName })
+            const result = await identify(token)
+            validated.set(String(slot), result)
+            json(200, { ok: true, agent: nameFor(result) })
           } catch (err) {
-            validated.delete(agent)
+            validated.delete(String(slot))
             json(200, { ok: false, error: err instanceof Error ? err.message : 'invalid' })
           }
           return
         }
 
         if (req.url === '/done') {
-          const ordered = agents.map(a => validated.get(a)).filter((t): t is CollectedToken => !!t)
-          if (ordered.length !== agents.length) {
+          const ordered = Array.from({ length: count }, (_, i) => validated.get(String(i)))
+            .filter((t): t is CollectedToken => !!t)
+          if (ordered.length !== count) {
             json(400, { error: 'not all tokens validated' })
             return
           }
@@ -299,7 +346,7 @@ export function collectViaWeb(agents: string[], port = 7777): Promise<CollectedT
       const url = `http://localhost:${port}`
       console.log(`\n  Portal: ${PORTAL_URL}`)
       console.log(`  Paste tokens at: ${url}\n`)
-      console.log(`  Waiting for ${agents.length} token(s)...`)
+      console.log(`  Waiting for ${count} token(s)...`)
     })
   })
 }
