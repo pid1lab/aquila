@@ -42,8 +42,28 @@ export async function identify(agent: string, token: string): Promise<CollectedT
 // Terminal
 // ---------------------------------------------------------------------------
 
-/** Read a line without echoing it. Handles paste, backspace, and ^C. */
-function promptHidden(label: string): Promise<string> {
+/**
+ * A token, abbreviated for eyeballing.
+ *
+ * A Discord bot token is `base64(application_id).timestamp.hmac`, so the
+ * leading characters encode the application id — public information, the same
+ * value that appears in every install URL. Only the trailing hmac is secret,
+ * and four characters of it are what every cloud console shows for exactly this
+ * purpose. Enough to tell two tokens apart, useless to an attacker.
+ */
+export function fingerprint(token: string): string {
+  if (token.length <= 12) return '•'.repeat(Math.max(token.length, 8))
+  return `${token.slice(0, 4)}…${token.slice(-4)}`
+}
+
+/**
+ * Read a line without echoing it. Handles paste, backspace, and ^C.
+ *
+ * `revealFirst` echoes that many leading characters literally before switching
+ * to bullets, so a paste visibly lands rather than producing an anonymous row
+ * of dots.
+ */
+function promptHidden(label: string, revealFirst = 0): Promise<string> {
   return new Promise((resolve, reject) => {
     const stdin = process.stdin
     if (!stdin.isTTY) {
@@ -86,7 +106,7 @@ function promptHidden(label: string): Promise<string> {
           continue
         }
         buffer += char
-        process.stdout.write('•')
+        process.stdout.write(buffer.length <= revealFirst ? char : '•')
       }
     }
 
@@ -155,7 +175,7 @@ export async function collectViaTerminal(
   for (const [i, agent] of agents.entries()) {
     if (i > 0) console.log(`\n  Now create the next application (${i + 1} of ${agents.length}).`)
     for (;;) {
-      const token = await promptHidden(`  ${agent.padEnd(12)} token › `)
+      const token = await promptHidden(`  ${agent.padEnd(12)} token › `, 4)
       if (!token) {
         console.log(`  ${''.padEnd(12)} (empty — paste the token, or ^C to abort)`)
         continue
@@ -171,7 +191,7 @@ export async function collectViaTerminal(
           continue
         }
         taken.set(result.applicationId, agent)
-        console.log(`  ${''.padEnd(12)} ✓ app "${result.appName}"`)
+        console.log(`  ${''.padEnd(12)} ✓ ${fingerprint(token)}  app "${result.appName}"`)
         collected.push(result)
         break
       } catch (err) {
@@ -213,7 +233,7 @@ function page(agents: string[]): string {
   h1 { font-size:1.35rem; margin:0 0 .35rem; }
   p { color:var(--mut); margin:0 0 1.75rem; }
   a { color:inherit; }
-  .row { display:grid; grid-template-columns:9rem 1fr 5rem; gap:.75rem; align-items:center;
+  .row { display:grid; grid-template-columns:9rem 1fr 7.5rem; gap:.75rem; align-items:center;
          padding:.6rem 0; border-top:1px solid var(--line); }
   .name { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   input { width:100%; padding:.55rem .7rem; border:1px solid var(--line); border-radius:6px;
@@ -267,7 +287,9 @@ function page(agents: string[]): string {
         const data = await res.json()
         if (mine !== seq) return
         if (data.ok) {
-          state.className = 'state ok'; state.textContent = data.appName
+          state.className = 'state ok'
+          state.textContent = data.fingerprint
+          state.title = data.appName
           valid.set(slot, token)
         } else {
           state.className = 'state bad'; state.textContent = data.error || 'invalid'
@@ -352,7 +374,7 @@ export function collectViaWeb(
               return
             }
             validated.set(String(slot), result)
-            json(200, { ok: true, appName: result.appName })
+            json(200, { ok: true, appName: result.appName, fingerprint: fingerprint(token) })
           } catch (err) {
             validated.delete(String(slot))
             json(200, { ok: false, error: err instanceof Error ? err.message : 'invalid' })
