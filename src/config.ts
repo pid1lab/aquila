@@ -40,6 +40,12 @@ export interface Config {
   provisionerAgent?: string
   /** The human's snowflake, captured on join. Seeds each agent's allowlist. */
   ownerId?: string
+  /**
+   * Opt agents into every channel their bot can see, refreshed as commands run.
+   * Unset means on. `aquila sync --off` turns it off and leaves the plugin's
+   * strict default in place: channels are reachable only once opted in by hand.
+   */
+  autoChannels?: boolean
   agents: Agent[]
 }
 

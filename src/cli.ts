@@ -6,6 +6,7 @@
 import { runAdd, runInit } from './init.ts'
 import { runDown, runStatus, runUp } from './up.ts'
 import { runMove, runSet } from './manage.ts'
+import { runSync } from './sync.ts'
 
 const USAGE = `
 aquila — Discord channels for your Claude Code agents
@@ -17,6 +18,9 @@ aquila — Discord channels for your Claude Code agents
                                         prompt for each agent's directory
   aquila down [agent...]       stop agents
   aquila status                show agents, channels, and session state
+  aquila sync [agent...]       opt agents into every channel they can see
+                               --off / --on  stop or resume doing this
+                                             automatically
   aquila move <agent> <path>   move an agent to a new working directory
   aquila set <agent> k=v       change a setting (claudeArgs)
 
@@ -27,6 +31,13 @@ server nickname so the bot displays as its agent name.
   aquila init backend=~/src/api frontend=~/src/web
 
 up/down with no names act on every agent.
+
+Each agent gets a private channel of its own. Beyond that it joins every
+channel its bot can see, and answers there only when @mentioned. Channels
+you can't see, it can't either — Discord decides, not Aquila.
+
+Options for init, add, up and status:
+  --no-auto-channels   skip channel discovery for this run
 
 Options for init and add:
   --web            paste tokens in a browser form instead of the terminal
@@ -56,13 +67,21 @@ const command = argv[0]
 const rest = argv.slice(1)
 const positional = rest.filter((a, i) => !a.startsWith('--') && rest[i - 1] !== '--port')
 
+const noAutoChannels = rest.includes('--no-auto-channels')
+
 switch (command) {
   case 'status':
-    process.exit(await runStatus())
+    process.exit(await runStatus({ noAutoChannels }))
     break
 
   case 'up':
-    process.exit(await runUp(positional, { trust: rest.includes('--trust') }))
+    process.exit(await runUp(positional, { trust: rest.includes('--trust'), noAutoChannels }))
+    break
+
+  case 'sync':
+    process.exit(
+      await runSync(positional, { off: rest.includes('--off'), on: rest.includes('--on') }),
+    )
     break
 
   case 'down':
@@ -91,6 +110,7 @@ switch (command) {
         rename: rest.includes('--rename'),
         adopt: rest.includes('--adopt'),
         open: rest.includes('--open'),
+        noAutoChannels,
       }),
     )
     break
@@ -108,6 +128,7 @@ switch (command) {
         port: port ? Number(port) : undefined,
         rename: rest.includes('--rename'),
         adopt: rest.includes('--adopt'),
+        noAutoChannels,
       }),
     )
     break

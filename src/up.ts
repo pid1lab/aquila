@@ -31,6 +31,7 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, saveConfig, type Agent, type Config } from './config.ts'
+import { autoSync } from './sync.ts'
 
 const CHANNEL_PLUGIN = 'plugin:discord@claude-plugins-official'
 const CLAUDE_CONFIG = join(homedir(), '.claude.json')
@@ -323,7 +324,10 @@ function resolveTargets(config: Config, names: string[]): Agent[] | string {
   return targets
 }
 
-export async function runUp(names: string[], options: { trust?: boolean } = {}): Promise<number> {
+export async function runUp(
+  names: string[],
+  options: { trust?: boolean; noAutoChannels?: boolean } = {},
+): Promise<number> {
   const config = await loadConfig()
   if (!config.agents.length) {
     console.log('\nNo agents configured. Run `aquila init <agent...>` first.\n')
@@ -374,6 +378,11 @@ export async function runUp(names: string[], options: { trust?: boolean } = {}):
   }
 
   console.log()
+
+  // Before spawning, so an agent starts already knowing about a channel you
+  // added since last time rather than ignoring it until the next command.
+  if (!options.noAutoChannels) await autoSync(config, targets)
+
   const pending: Agent[] = []
 
   for (const agent of targets) {
@@ -455,13 +464,15 @@ export async function runDown(names: string[]): Promise<number> {
   return 0
 }
 
-export async function runStatus(): Promise<number> {
+export async function runStatus(options: { noAutoChannels?: boolean } = {}): Promise<number> {
   const config = await loadConfig()
 
   if (!config.agents.length) {
     console.log('\nNo agents configured. Run `aquila init <agent...>` to get started.\n')
     return 0
   }
+
+  if (!options.noAutoChannels) await autoSync(config, config.agents)
 
   console.log(`\nserver:  ${config.guildId ?? '(none)'}`)
   console.log(`owner:   ${config.ownerId ?? '(not captured)'}\n`)

@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+**Agents find their own channels.** Every agent now joins each channel its bot
+can see, not just the private one Aquila made for it. `init`, `add`, `up` and
+`status` refresh this in passing; `aquila sync` forces it, `aquila sync --off`
+stops it, and `--no-auto-channels` skips one run.
+
+This closes a gap with a bad failure mode. The channel plugin gates guild
+channels behind an explicit per-channel opt-in and drops everything else
+silently — no reply, no error, not even the ack reaction, since that fires after
+the gate. Aquila seeded exactly one entry per agent, so a channel you created by
+hand was unreachable until you hand-edited JSON in every state dir, and a bot
+sitting in it looked dead.
+
+Detection probes `GET /channels/{id}` — 403 without `VIEW_CHANNEL`, 200 with it
+— rather than recomputing role ordering, category inheritance and admin bypass
+locally and being quietly wrong. `GET /guilds/{id}/channels` can't be used for
+this: it returns every channel's metadata regardless of access.
+
+Discovered channels get `requireMention: true`, unlike an agent's own channel,
+because a shared room needs you to address one agent at a time. They keep
+`allowFrom: [<owner>]`, so this widens where you can summon an agent, never who
+can drive it. Agents never join each other's private channels, and groups you
+added by hand are never modified or retracted — Aquila records its own entries
+in `auto-channels.json` beside the access file.
+
 ## 0.1.1
 
 Token collection, mostly — the part of setup you actually touch by hand.

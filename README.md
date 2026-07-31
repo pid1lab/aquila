@@ -137,6 +137,7 @@ agent you're pasting for.
 | `--adopt` | take over an existing channel with the agent's name |
 | `--no-plugin` | skip installing the channel plugin (`init` only) |
 | `--open` | try to open install links in a browser (skipped over SSH) |
+| `--no-auto-channels` | skip channel discovery for this run (also on `up`/`status`) |
 
 If a channel with the agent's name already exists, Aquila won't quietly create a
 duplicate (Discord permits them, and the result is two identical channels with
@@ -152,6 +153,7 @@ aquila up              # start every agent; returns immediately
 aquila up backend      # or just one
 aquila status
 aquila down
+aquila sync            # refresh which channels agents can reach
 ```
 
 Each agent runs as a detached session with its own pty and its own
@@ -212,19 +214,55 @@ Note `--dangerously-skip-permissions` does **not** cover MCP tools.
 
 ## A shared room
 
-Agents can also join a common channel alongside their private one. Opt each agent
-into it with `requireMention: true` in its `access.json`, and address them with
-`@backend` — real `@mention` autocomplete, because these are real bot users.
+Alongside its private channel, every agent joins each channel its bot can see.
+Address them with `@backend` — real `@mention` autocomplete, because these are
+real bot users.
 
-Agents can *read* each other there: `fetch_messages` returns unfiltered channel
-history, including other bots' replies. They can't be *woken* by each other —
-the plugin drops inbound bot messages — so collaboration works with you as the
-scheduler: ask one agent something, then ask another to build on it.
+```sh
+aquila sync            # refresh now
+aquila sync frontend   # just one agent
+aquila sync --off      # stop doing it automatically
+```
+
+`init`, `add`, `up` and `status` refresh it in passing, so creating a channel and
+running any command is enough; `--no-auto-channels` skips it for one run. The
+plugin re-reads `access.json` on every inbound message, so a refresh reaches
+running agents without a restart.
+
+This exists because the plugin gates guild channels behind an explicit
+per-channel opt-in, and drops anything else *silently* — no reply, no error, not
+even the ack reaction, which fires after the gate. A bot that hasn't been opted
+in is indistinguishable from a bot that's down.
+
+Discovery is a probe, not a calculation. `GET /channels/{id}` answers 403 without
+`VIEW_CHANNEL` and 200 with it — ground truth from the same permission code that
+decides whether the gateway delivers at all. Computing it locally would mean
+reimplementing role ordering, category inheritance and admin bypass, and being
+quietly wrong about them. Note that `GET /guilds/{id}/channels` is no substitute:
+it returns every channel's metadata regardless of access.
+
+Two rules keep this from widening anything that matters:
+
+- Discovered channels get `requireMention: true`, unlike an agent's private
+  channel. In a room several agents share, you address one at a time.
+- They keep `allowFrom: [<your id>]`. Discovery changes *where* you can summon an
+  agent, never *who* can drive it — a stranger in a public channel is dropped
+  before the mention check runs.
+
+Agents never join each other's private channels; Discord's own overwrites deny
+it, and Aquila skips them regardless. A group you add to `access.json` by hand is
+left exactly as you wrote it, and never retracted — Aquila tracks which entries
+are its own in `auto-channels.json` beside the access file.
+
+Agents can *read* each other in a shared room: `fetch_messages` returns unfiltered
+channel history, including other bots' replies. They can't be *woken* by each
+other — the plugin drops inbound bot messages — so collaboration works with you as
+the scheduler: ask one agent something, then ask another to build on it.
 
 ## Status
 
-`init`, `add`, `up`, `down`, and `status` all work and are verified against live
-Discord.
+`init`, `add`, `up`, `down`, `status`, and `sync` all work and are verified
+against live Discord.
 
 ```sh
 bun install
@@ -249,6 +287,7 @@ src/
   init.ts                provisioning flow — init and add
   tokens.ts              token collection — terminal prompts and the --web form
   up.ts                  agent lifecycle: detached pty sessions, up/down/status
+  sync.ts                channel discovery — probe access, maintain access.json
   config.ts              ~/.aquila state, per-agent state dirs, settings seeding
   discord/
     rest.ts              minimal REST client with 429 handling

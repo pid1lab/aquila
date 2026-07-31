@@ -44,6 +44,7 @@ import {
   type Config,
 } from './config.ts'
 import { collectViaTerminal, collectViaWeb, type CollectedToken } from './tokens.ts'
+import { autoSync } from './sync.ts'
 
 export interface InitOptions {
   web?: boolean
@@ -56,6 +57,8 @@ export interface InitOptions {
   adopt?: boolean
   /** Try to open install links in a browser. Useless over SSH; opt-in. */
   open?: boolean
+  /** Skip channel discovery for this run. */
+  noAutoChannels?: boolean
 }
 
 /** `backend` or `backend=~/src/api` */
@@ -354,6 +357,11 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
   }
 
   await persist()
+
+  // Channels that predate Aquila — #general and whatever else you already had.
+  // Without this they stay unreachable until the first `aquila sync`.
+  if (!options.noAutoChannels) await autoSync(config, config.agents)
+
   console.log(`\n  ${agents.length} agent(s) ready. Start them with:\n\n    aquila up\n`)
   return 0
 }
@@ -474,6 +482,12 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
   await saveConfig(config)
 
   done(`#${channel.name} → ${spec.path}`)
+
+  // A new agent should arrive already in the shared channels the others use.
+  if (!options.noAutoChannels) {
+    await autoSync(config, config.agents.filter(a => a.name === t.agent))
+  }
+
   console.log(`\n  Start it with:\n\n    aquila up ${t.agent}\n`)
   return 0
 }
