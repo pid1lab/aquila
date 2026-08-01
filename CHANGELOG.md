@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2
 
 **Agents keep their conversation across restarts.** An agent is the durable
 thing — bot, channel, directory — and a Claude Code session is a conversation it

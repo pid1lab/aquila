@@ -32,6 +32,19 @@ jobs:
       - name: Typecheck
         run: bun x tsc --noEmit
 
+      # The User-Agent Discord sees is a literal, and sat at 0.1.0 through the
+      # whole of 0.1.1 because nothing tied it to the version being released.
+      - name: Version is consistent
+        run: |
+          version=$(node -p "require('./package.json').version")
+          for file in CHANGELOG.md src/discord/rest.ts; do
+            grep -q "$version" "$file" || {
+              echo "::error file=$file::does not mention version $version"
+              exit 1
+            }
+          done
+          echo "version $version present in CHANGELOG.md and src/discord/rest.ts"
+
       # Catches the class of packaging bug that shipped a binary-less 0.1.0:
       # npm's publish-time validation silently drops an invalid bin entry, and
       # `npm pack` does not apply the same rules. --dry-run does.
