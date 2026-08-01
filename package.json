@@ -1,6 +1,6 @@
 {
   "name": "@pid1lab/aquila",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Give every Claude Code agent its own Discord bot, channel, and working directory.",
   "license": "Apache-2.0",
   "type": "module",

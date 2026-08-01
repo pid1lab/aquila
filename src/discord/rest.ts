@@ -42,7 +42,7 @@ export async function rest<T>(
       headers: {
         Authorization: `Bot ${token}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'Aquila (https://github.com/pid1lab/aquila, 0.1.2)',
+        'User-Agent': 'Aquila (https://github.com/pid1lab/aquila, 0.2.0)',
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     })
