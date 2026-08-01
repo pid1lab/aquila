@@ -479,6 +479,23 @@ the agent needs a restart to pick the change up, and it redirects `path` to
 
 ## Permissions
 
+**Turn off Public Bot.** Discord's Public Bot toggle is on by default, which means
+anyone who finds your application can install your agent on their own server. It
+is the gate ahead of everything else here — enforced by Discord, before any
+`access.json` policy applies.
+
+Aquila cannot set it. `PATCH /applications/@me` accepts the request and persists
+every other field while silently dropping `bot_public`; the same request that
+ignores it will happily write `description`. That is deliberate and correct — a
+leaked bot token should not be able to make your bot installable everywhere — but
+it does mean the toggle is portal-only. So `init`, `add` and `status` check it and
+say so:
+
+```
+! backend, frontend installable by anyone — turn off Public Bot
+  in the portal (application → Bot → Public Bot). Aquila can't set it.
+```
+
 Each agent's working directory gets a `.claude/settings.local.json` pre-approving
 the channel plugin's own MCP tools. Without it the agent needs permission to call
 `reply` — that is, permission to speak on Discord at all — so every single

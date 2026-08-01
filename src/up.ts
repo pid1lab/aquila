@@ -30,7 +30,8 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { loadConfig, saveConfig, type Agent, type Config } from './config.ts'
+import { loadConfig, readAgentToken, saveConfig, type Agent, type Config } from './config.ts'
+import { isBotPublic } from './discord/provision.ts'
 import { autoSync, reachOf } from './sync.ts'
 import { triggerSummary } from './allow.ts'
 import { briefingFor, type Reach } from './brief.ts'
@@ -551,5 +552,28 @@ export async function runStatus(options: { noAutoChannels?: boolean } = {}): Pro
     )
   }
   console.log()
+
+  // Checked here rather than only at provisioning: the toggle is portal-only
+  // and easy to skip past once, so the health command is where it should keep
+  // showing up. Best-effort — a lookup failure must not break `status`.
+  const publicBots: string[] = []
+  await Promise.all(
+    config.agents.map(async agent => {
+      const token = await readAgentToken(agent.stateDir)
+      if (!token) return
+      try {
+        if (await isBotPublic(token)) publicBots.push(agent.name)
+      } catch {
+        /* offline, or the token was reset — not status's problem to report */
+      }
+    }),
+  )
+  if (publicBots.length) {
+    console.log(
+      `  ! ${publicBots.sort().join(', ')} installable by anyone — turn off Public Bot\n` +
+        `    in the portal (application → Bot → Public Bot). Aquila can't set it.\n`,
+    )
+  }
+
   return 0
 }

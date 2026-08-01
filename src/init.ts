@@ -162,13 +162,14 @@ async function nameInGuild(token: string, guildId: string, agent: string): Promi
 }
 
 /** Flip the intent flag, and optionally rename. Shared by init and add. */
-async function prepareBot(t: CollectedToken, rename: boolean): Promise<void> {
+/** Returns whether this bot is still installable by anyone — see `publicBotWarning`. */
+async function prepareBot(t: CollectedToken, rename: boolean): Promise<boolean> {
   // Load-bearing: without this the bot receives messages with empty content.
-  await enableMessageContentIntent(t.token)
+  const app = await enableMessageContentIntent(t.token)
 
   if (!rename) {
     done(`${t.agent}: message content intent on`)
-    return
+    return app.bot_public ?? false
   }
   try {
     await renameBot(t.token, t.agent)
@@ -176,6 +177,27 @@ async function prepareBot(t: CollectedToken, rename: boolean): Promise<void> {
   } catch {
     done(`${t.agent}: message content intent on (rename skipped — rate limited?)`)
   }
+  return app.bot_public ?? false
+}
+
+/**
+ * Discord's Public Bot toggle is on by default, which means anyone who finds
+ * the application can install your agent on their own server. Aquila cannot
+ * turn it off — the field is portal-only, silently dropped by
+ * `PATCH /applications/@me` — so the least it can do is not let it pass
+ * unmentioned at the one moment the user is already in the portal.
+ */
+function publicBotWarning(names: string[]): void {
+  if (!names.length) return
+  const many = names.length > 1
+  console.log(`\n  ! ${names.join(', ')} ${many ? 'are' : 'is'} installable by anyone.`)
+  console.log(
+    `    Discord's Public Bot toggle is on by default, and it decides who can\n` +
+      `    add ${many ? 'these bots' : 'this bot'} to a server — the gate ahead of everything Aquila sets.\n` +
+      `    Aquila can't change it; the field is portal-only.\n\n` +
+      `    Turn it off:  https://discord.com/developers/applications\n` +
+      `                  → the application → Bot → Public Bot → off\n`,
+  )
 }
 
 /**
@@ -232,7 +254,10 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
     parsed.find(p => p.name === agent)?.path ?? cwd
 
   console.log()
-  for (const t of tokens) await prepareBot(t, !!options.rename)
+  const publicBots: string[] = []
+  for (const t of tokens) {
+    if (await prepareBot(t, !!options.rename)) publicBots.push(t.agent)
+  }
 
   // 3. The server. The first bot provisions, so it needs MANAGE_CHANNELS and
   //    MANAGE_ROLES; it also installs before we know the guild id, so the user
@@ -363,6 +388,7 @@ export async function runInit(specs: string[], options: InitOptions = {}): Promi
   if (!options.noAutoChannels) await autoSync(config, config.agents)
 
   console.log(`\n  ${agents.length} agent(s) ready. Start them with:\n\n    aquila up\n`)
+  publicBotWarning(publicBots)
   return 0
 }
 
@@ -439,7 +465,7 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
   }
 
   console.log()
-  await prepareBot(t, !!options.rename)
+  const publicBots = (await prepareBot(t, !!options.rename)) ? [t.agent] : []
 
   // One click: the server is already known, so it's pre-selected and locked.
   const already = await listGuilds(t.token)
@@ -489,6 +515,7 @@ export async function runAdd(specs: string[], options: InitOptions = {}): Promis
   }
 
   console.log(`\n  Start it with:\n\n    aquila up ${t.agent}\n`)
+  publicBotWarning(publicBots)
   return 0
 }
 

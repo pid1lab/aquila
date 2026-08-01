@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+**Aquila now tells you when a bot is installable by anyone.** Discord's Public
+Bot toggle is on by default, so any application you create can be added to
+someone else's server. It is the outermost gate on an agent — ahead of channel
+overwrites, ahead of `access.json` — and nothing surfaced it.
+
+`init`, `add` and `status` now check `bot_public` and say so:
+
+```
+! backend, frontend installable by anyone — turn off Public Bot
+  in the portal (application → Bot → Public Bot). Aquila can't set it.
+```
+
+Aquila cannot fix it for you, and that is worth stating precisely rather than
+guessing: `PATCH /applications/@me` accepts a request containing `bot_public`,
+returns 200, persists every other field in the same request — `description`
+writes fine — and silently drops that one. Deliberate on Discord's part, and
+correct: a leaked bot token should not be able to make the bot installable
+everywhere. So the toggle stays portal-only and the best Aquila can do is refuse
+to let it pass unmentioned.
+
 ## 0.2.0
 
 **Agents keep their conversation across restarts.** An agent is the durable

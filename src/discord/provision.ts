@@ -44,6 +44,21 @@ export function getApplication(token: string): Promise<Application> {
   return rest<Application>(token, 'GET', '/oauth2/applications/@me')
 }
 
+/**
+ * Is this bot installable by anyone, rather than only its owner?
+ *
+ * The Public Bot toggle is on by default, and it is the first gate on who can
+ * add your agent to a server — enforced by Discord, ahead of anything Aquila
+ * writes. It cannot be turned off from here: `PATCH /applications/@me` accepts
+ * the request, persists every other field, and silently drops `bot_public`.
+ * That is deliberate on Discord's part and correct — a leaked bot token should
+ * not be able to make the bot installable everywhere — but it means the toggle
+ * is portal-only, so all Aquila can do is notice and say so.
+ */
+export async function isBotPublic(token: string): Promise<boolean> {
+  return (await getApplication(token)).bot_public ?? false
+}
+
 /** The bot's own user account. `id` here is what permission overwrites target. */
 export function getBotUser(token: string): Promise<User> {
   return rest<User>(token, 'GET', '/users/@me')
