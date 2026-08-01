@@ -31,6 +31,279 @@ npm install -g @pid1lab/aquila     # or: bunx @pid1lab/aquila
 
 ---
 
+## Concepts
+
+**One bot per agent, always.** The mapping is 1:1 and Aquila never breaks it, so
+this document says *agent* throughout and means the bot too. Where the
+distinction genuinely matters — the Developer Portal, Discord's own API — it says
+so explicitly.
+
+An agent is the durable thing. Everything else either belongs to it permanently
+or is a pointer it can be repointed at.
+
+| Entity | What it is | Per agent | Fixed by |
+| --- | --- | --- | --- |
+| **Application** | what you create in the Developer Portal | one | you, by hand |
+| **Bot user** | how the agent appears in Discord | one | Discord — its id *is* the application id |
+| **Token** | the credential that *is* the agent's identity | one | Discord, on reset |
+| **State dir** | `~/.aquila/agents/<name>/` — token, access policy | one | Aquila |
+| **Working directory** | where the session runs | one | `aquila move` |
+| **Private channel** | `#<name>`, only this agent and you | one | `aquila init` / `add` |
+| **Shared channels** | rooms it joins alongside others | many | `aquila sync` |
+| **Session** | the Claude Code conversation it drives | one at a time | `aquila bind` |
+
+The one N:M relationship is shared channels — many agents in many rooms.
+Everything else is 1:1.
+
+**Session is a pointer, not a property.** An agent outlives any particular
+conversation. `aquila bind` repoints it, and a restart resumes whatever it points
+at rather than starting over.
+
+### What binds a session to an agent
+
+A single environment variable:
+
+```
+DISCORD_STATE_DIR=/home/you/.aquila/agents/backend
+```
+
+A Claude Code session has no idea which agent it is. It inherits that variable
+and passes it to the channel plugin, which reads the token and access policy out
+of that directory. **Which agent a session is = which state dir it was pointed
+at.** Not the working directory, not the process, not `config.json`.
+
+That is why `claude --bg` is unusable here: its daemon hands a pre-warmed session
+an earlier invocation's environment, so a second agent inherits the first one's
+state dir, both authenticate as the same bot, and every message is answered
+twice. It is also why `up` strips every `CLAUDE*` variable before spawning — a
+session that inherits the launching session's identity stops being its own.
+
+### What has to be true for a message to reach an agent
+
+Three gates, in order. Only the first announces itself.
+
+| # | Gate | Lives in | Fails as |
+| --- | --- | --- | --- |
+| 1 | Can the bot see the channel? | Discord permission overwrites | `403`, never delivered |
+| 2 | Is the channel opted in? | `access.json` → `groups[id]` | dropped **silently** |
+| 3 | This sender, and mentioned if required? | `allowFrom`, `requireMention` | dropped **silently** |
+
+Gate 1 is Discord's and is the real security boundary — it's what makes per-agent
+channel isolation trustworthy. Gates 2 and 3 belong to the plugin and are both
+silent, which is why an agent that looks dead usually isn't. `aquila sync`
+maintains gate 2; `aquila allow` maintains gate 3.
+
+### Where state lives
+
+| Path | Owner | Contents |
+| --- | --- | --- |
+| `~/.aquila/config.json` | Aquila | agents, paths, ids, session ids, guest list |
+| `~/.aquila/agents/<name>/.env` | plugin | `DISCORD_BOT_TOKEN`, mode `0600` |
+| `~/.aquila/agents/<name>/access.json` | plugin | who and which channels |
+| `~/.aquila/agents/<name>/auto-channels.json` | Aquila | which groups are Aquila's to retract |
+| `~/.aquila/agents/<name>/session.log` | Aquila | the detached session's output |
+| `<workdir>/.claude/settings.local.json` | Claude Code | pre-approved MCP tools |
+| `~/.claude/projects/<encoded-workdir>/<uuid>.jsonl` | Claude Code | conversation transcripts |
+
+`config.json` is a *cache* of Discord's state, not the truth. Delete a channel in
+the Discord UI and its `channelId` becomes a dangling pointer with nothing local
+noticing. The same applies to `pid`, which is why `status` re-checks `/proc`
+rather than trusting it.
+
+---
+
+## Command reference
+
+Every command. `<required>`, `[optional]`, `...` repeats.
+
+### `aquila init <agent...>`
+
+Provision bots and channels from scratch. Collects a token per agent, enables the
+Message Content intent, discovers the server from the first install, captures
+your snowflake from its `owner_id`, creates a scoped private channel per agent,
+writes tokens and access policy, and installs the channel plugin.
+
+```sh
+aquila init backend frontend                       # two agents, both in the cwd
+aquila init backend=~/src/api frontend=~/src/web   # explicit directories
+aquila init backend --web --port 8080              # paste tokens in a browser
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--web` | collect tokens via a localhost form instead of terminal prompts |
+| `--port <n>` | port for `--web` (default 7777) |
+| `--rename` | also set each bot's **global** username (~2/hour limit; nickname is set regardless) |
+| `--adopt` | take over an existing channel with the agent's name, rewriting its permissions |
+| `--open` | try to open install links in a browser (pointless over SSH) |
+| `--no-plugin` | skip `claude plugin install` |
+| `--no-auto-channels` | skip channel discovery for this run |
+
+### `aquila add <agent> [path]`
+
+One more agent on the server you already have. Same provisioning, minus server
+discovery — the install link comes pre-scoped to your guild, so it's one click.
+Path defaults to the cwd.
+
+```sh
+aquila add reviewer ~/src/docs
+```
+
+Takes every `init` flag except `--no-plugin`. A new agent joins the shared
+channels the others are in before it first starts.
+
+### `aquila up [agent...]`
+
+Start agents. Returns as soon as they're spawned; they outlive the shell, but not
+a reboot. No names means every agent.
+
+Each runs detached with its own pty and its own `DISCORD_STATE_DIR`. `up`
+refreshes channel discovery, resumes each agent's bound conversation, appends the
+roster briefing, and waits for the Discord gateway before reporting success —
+a session that starts fine and is deaf is the failure worth catching.
+
+```sh
+aquila up                # everything
+aquila up backend        # one
+aquila up --trust        # accept folder-trust for each directory
+aquila up --new          # fresh conversation instead of resuming
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--trust` | record Claude Code's folder-trust for each agent's directory |
+| `--new` | start a fresh conversation instead of resuming the bound one |
+| `--no-brief` | don't tell the agent who the other agents are |
+| `--no-auto-channels` | skip channel discovery for this run |
+
+Refuses to start an agent twice: two sessions on one token answer every message
+twice.
+
+### `aquila down [agent...]`
+
+Stop agents. SIGTERMs the process group, waits for it to actually die, and
+escalates to SIGKILL if it doesn't — it verifies rather than assuming.
+
+```sh
+aquila down
+aquila down frontend
+```
+
+### `aquila status`
+
+Agents, channels, bound sessions, and liveness. Also prints the server, your
+snowflake, and who can trigger agents in shared channels.
+
+```
+server:  1473397975479881830
+owner:   1021487254104973352
+trigger: you only
+
+  AGENT     CHANNEL    STATE                    SESSION   PATH
+  backend   #backend   connected · pid 2435922  368592fb  /home/you/src/api
+  frontend  #frontend  stopped                  c5ae1100  /home/you/src/web
+```
+
+`connected` means the gateway is up; `no gateway` means the session is running
+but deaf. A running agent whose directory has drifted from config is flagged
+`⚠ running in …`. Takes `--no-auto-channels`.
+
+### `aquila sessions [agent...]`
+
+Conversations recorded for each agent's working directory, newest first. `●`
+marks the one the agent is bound to.
+
+```
+  backend  →  /home/you/src/api
+
+    ● 368592fb   136 turns   253K   23m ago  "Ping"
+      f101de6d    23 turns    49K    8h ago  "run whoami and tell me the output"
+```
+
+The preview is the first thing you said, with the Discord envelope stripped. Turn
+count and size are shown because a resumed session grows until it compacts.
+
+### `aquila bind <agent> <session-id>`
+
+Point an agent at a different conversation. Abbreviated ids work, as printed by
+`aquila sessions`. Takes effect on the next start, since the session is fixed at
+spawn.
+
+```sh
+aquila bind backend 368592fb    # adopt a conversation you had in a terminal
+aquila bind backend --new       # start a fresh one
+```
+
+### `aquila sync [agent...]`
+
+Opt each agent into every channel its bot can see, and retract channels it has
+lost access to. Runs automatically during `init`, `add`, `up` and `status`; the
+command forces it after you create a channel.
+
+```sh
+aquila sync              # all agents
+aquila sync frontend     # one
+aquila sync --off        # stop doing it automatically
+aquila sync --on         # resume, and sync now
+```
+
+Groups you added to `access.json` by hand are never modified or retracted. Agents
+never join each other's private channels. Takes effect on running agents without
+a restart — the plugin re-reads `access.json` per message.
+
+### `aquila allow [name...]`
+
+Who besides you can trigger an agent in a shared channel. No arguments lists the
+current policy. Names in, names out — @handles, display names, server nicknames,
+or a raw user id.
+
+```sh
+aquila allow                  # who currently can
+aquila allow trz              # add someone
+aquila allow trz alice        # several at once
+aquila allow --remove trz
+aquila allow --anyone         # any server member, still @mention-gated
+aquila allow --owner-only     # back to just you
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--remove` (`--rm`) | take the named people off the list |
+| `--anyone` | any member of the server may trigger agents |
+| `--owner-only` | only you |
+
+Never applies to private channels — those stay yours whatever the guest list
+says. Ambiguous names list candidates rather than guessing. Bots are refused: the
+plugin drops inbound bot messages, so it would do nothing.
+
+### `aquila move <agent> <path>`
+
+Change an agent's working directory. Trust-checks the destination, carries over
+tool pre-approval, updates config, and restarts the agent if it was running.
+
+```sh
+aquila move backend ~/src/new-api
+aquila move backend ~/src/new-api --trust
+```
+
+Editing `path` in `config.json` by hand does none of that — the running session
+keeps its old directory while `status` reports the new one.
+
+### `aquila set <agent> <key>=<value>`
+
+Change a setting. Currently `claudeArgs`, extra flags for the `claude`
+invocation, split on whitespace.
+
+```sh
+aquila set backend claudeArgs=--model opus
+aquila set backend claudeArgs=          # clear
+```
+
+Read at spawn, so it warns when a restart is needed. `path` is redirected to
+`move` rather than done halfway.
+
+---
+
 ## What Aquila can't do
 
 Two things, both enforced by Discord:
@@ -103,7 +376,7 @@ because separate bots buy things webhooks can't:
 Bot count and session count are independent either way — each agent gets its own
 Claude Code session regardless.
 
-## Setup
+## Naming, tokens, and channels
 
 ```sh
 aquila init backend frontend                       # two agents, in the cwd
@@ -129,16 +402,6 @@ against Discord as it lands, so a half-copied paste is caught immediately rather
 than three steps later. Both prompt per agent name, so you always know which
 agent you're pasting for.
 
-| Flag | Effect |
-| --- | --- |
-| `--web` | collect tokens in a browser form instead of the terminal |
-| `--port <n>` | port for `--web` (default 7777) |
-| `--rename` | rename each bot to its agent name (rate-limited, see above) |
-| `--adopt` | take over an existing channel with the agent's name |
-| `--no-plugin` | skip installing the channel plugin (`init` only) |
-| `--open` | try to open install links in a browser (skipped over SSH) |
-| `--no-auto-channels` | skip channel discovery for this run (also on `up`/`status`) |
-
 If a channel with the agent's name already exists, Aquila won't quietly create a
 duplicate (Discord permits them, and the result is two identical channels with
 messages vanishing into the wrong one). A channel that already grants the bot
@@ -146,16 +409,7 @@ access is adopted silently — that's a re-run of a partly-finished `init`, and
 resuming is correct. Anything else is refused unless you pass `--adopt`, which
 rewrites that channel's permissions.
 
-## Running agents
-
-```sh
-aquila up              # start every agent; returns immediately
-aquila up backend      # or just one
-aquila status
-aquila down
-aquila sync            # refresh which channels agents can reach
-aquila allow           # who can trigger agents in shared channels
-```
+## How agents run
 
 Each agent runs as a detached session with its own pty and its own
 `DISCORD_STATE_DIR`, so each connects as its own bot. `up` verifies the Discord
@@ -176,18 +430,7 @@ read, edit, and execute everything in it.
 > several. Upstream has the same class of bug on Telegram
 > ([#4647](https://github.com/anthropics/claude-plugins-official/issues/4647)).
 
-## Sessions
-
-An agent is the durable thing — a bot, a channel, a directory. A Claude Code
-session is a conversation it drives, and the two are a pointer, not the same
-object.
-
-```sh
-aquila sessions            # conversations per agent, ● marks the bound one
-aquila bind backend 368592fb   # point the bot at a different conversation
-aquila bind backend --new      # start a fresh one
-aquila up --new                # fresh conversation for this start only
-```
+## Why sessions are a pointer
 
 Aquila mints the session id rather than discovering it: `claude --session-id
 <uuid>` accepts an id we generate and writes the transcript to `<uuid>.jsonl`,
@@ -206,12 +449,7 @@ To adopt a conversation you had in a terminal, find it with `aquila sessions`
 and `bind` the agent to it — the session is replaced by a bot-backed one, the
 history isn't.
 
-## Editing an agent
-
-```sh
-aquila move backend ~/src/new-api      # change working directory
-aquila set backend claudeArgs=--model opus
-```
+## Why `move` exists
 
 A session's working directory is fixed at spawn, so editing `path` in
 `~/.aquila/config.json` by hand does nothing to a running agent — it keeps
@@ -248,17 +486,6 @@ Note `--dangerously-skip-permissions` does **not** cover MCP tools.
 Alongside its private channel, every agent joins each channel its bot can see.
 Address them with `@backend` — real `@mention` autocomplete, because these are
 real bot users.
-
-```sh
-aquila sync            # refresh now
-aquila sync frontend   # just one agent
-aquila sync --off      # stop doing it automatically
-```
-
-`init`, `add`, `up` and `status` refresh it in passing, so creating a channel and
-running any command is enough; `--no-auto-channels` skips it for one run. The
-plugin re-reads `access.json` on every inbound message, so a refresh reaches
-running agents without a restart.
 
 This exists because the plugin gates guild channels behind an explicit
 per-channel opt-in, and drops anything else *silently* — no reply, no error, not
@@ -332,9 +559,9 @@ when a channel is joined, so the shared channels are named up front. The roster
 is rebuilt on every `up`, so it refreshes on restart — an agent already running
 when you `aquila add` another won't know about the newcomer until you restart it.
 
-## Status
+## Project status
 
-`init`, `add`, `up`, `down`, `status`, `sync`, and `allow` all work and are
+Every command listed above works and are
 verified against live Discord.
 
 ```sh

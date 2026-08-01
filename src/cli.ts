@@ -32,14 +32,15 @@ aquila — Discord channels for your Claude Code agents
                                              automatically
   aquila allow [name...]       let other people trigger agents in shared
                                channels; no name lists who currently can
-                               --remove <name>  take someone off the list
+                               --remove <name>  take someone off the list (--rm)
                                --anyone         any member of the server
                                --owner-only     back to just you
   aquila move <agent> <path>   move an agent to a new working directory
   aquila set <agent> k=v       change a setting (claudeArgs)
 
-You name each agent; the application can be called anything. Aquila sets a
-server nickname so the bot displays as its agent name.
+One bot per agent, always — "agent" below means the bot too. You name each
+agent; the application can be called anything. Aquila sets a server nickname
+so the bot displays as its agent name.
 
   aquila init backend frontend
   aquila init backend=~/src/api frontend=~/src/web
@@ -167,6 +168,7 @@ switch (command) {
         port: port ? Number(port) : undefined,
         rename: rest.includes('--rename'),
         adopt: rest.includes('--adopt'),
+        open: rest.includes('--open'),
         noAutoChannels,
       }),
     )
