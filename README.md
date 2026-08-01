@@ -110,6 +110,17 @@ the Discord UI and its `channelId` becomes a dangling pointer with nothing local
 noticing. The same applies to `pid`, which is why `status` re-checks `/proc`
 rather than trusting it.
 
+### Environment
+
+| Variable | Effect |
+| --- | --- |
+| `AQUILA_HOME` | where config and state dirs live. Defaults to `~/.aquila`. Set it to run separate fleets side by side. |
+| `DISCORD_STATE_DIR` | set by Aquila per agent; what tells a session which agent it is. Not for you to set. |
+| `SSH_CONNECTION`, `DISPLAY`, `WAYLAND_DISPLAY` | read to decide whether `--open` can reach a browser |
+
+Agents are spawned with every `CLAUDE*` variable stripped, so a session never
+inherits the identity of whatever launched it.
+
 ---
 
 ## Command reference
@@ -135,9 +146,13 @@ aquila init backend --web --port 8080              # paste tokens in a browser
 | `--port <n>` | port for `--web` (default 7777) |
 | `--rename` | also set each bot's **global** username (~2/hour limit; nickname is set regardless) |
 | `--adopt` | take over an existing channel with the agent's name, rewriting its permissions |
-| `--open` | try to open install links in a browser (pointless over SSH) |
+| `--open` | open install links in a browser; skipped automatically over SSH with no display |
 | `--no-plugin` | skip `claude plugin install` |
 | `--no-auto-channels` | skip channel discovery for this run |
+
+**Agent names** are lowercased, and anything outside `a-z 0-9 - _` becomes a dash
+— `"My Agent!"` is `my-agent`. The name is the channel name and the bot's server
+nickname, so it's worth typing the one you want.
 
 ### `aquila add <agent> [path]`
 
